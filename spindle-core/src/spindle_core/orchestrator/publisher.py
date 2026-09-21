@@ -1,3 +1,7 @@
+# Component: Spindle Architecture
+# File: publisher.py
+# Description: Source code module for the Spindle workflow orchestration platform.
+
 import logging
 import threading
 

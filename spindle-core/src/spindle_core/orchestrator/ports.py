@@ -1,3 +1,7 @@
+# Component: Spindle Architecture
+# File: ports.py
+# Description: Source code module for the Spindle workflow orchestration platform.
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol

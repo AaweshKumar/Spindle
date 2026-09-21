@@ -1,3 +1,7 @@
+# Component: Spindle Architecture
+# File: messages.py
+# Description: Source code module for the Spindle workflow orchestration platform.
+
 from dataclasses import dataclass
 # ---- Events (input to decide) ----
 

@@ -1,3 +1,7 @@
+# Component: Spindle Architecture
+# File: __init__.py
+# Description: Source code module for the Spindle workflow orchestration platform.
+
 from spindle_core.engine.errors import InvalidTransition
 from spindle_core.engine.machine import decide, start_saga
 from spindle_core.engine.messages import (

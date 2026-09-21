@@ -1,3 +1,7 @@
+# Component: Spindle Architecture
+# File: runner.py
+# Description: Source code module for the Spindle workflow orchestration platform.
+
 import logging
 from collections.abc import Sequence
 

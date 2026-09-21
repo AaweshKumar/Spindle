@@ -1,3 +1,7 @@
+# Component: Spindle Architecture
+# File: test_machine.py
+# Description: Source code module for the Spindle workflow orchestration platform.
+
 import pytest
 
 from src.spindle_core.engine.errors import InvalidTransition

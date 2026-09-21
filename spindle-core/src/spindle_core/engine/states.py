@@ -1,3 +1,7 @@
+# Component: Spindle Architecture
+# File: states.py
+# Description: Source code module for the Spindle workflow orchestration platform.
+
 from enum import StrEnum
 
 
