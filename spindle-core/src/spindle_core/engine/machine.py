@@ -67,9 +67,7 @@ def _compensate_latest(state: SagaState) -> Result:
     return replace(state, status=SagaStatus.COMPENSATED), []
 
 
-def start_saga(
-    saga_id: str, steps: Sequence[tuple[str, str]]
-) -> Result:
+def start_saga(saga_id: str, steps: Sequence[tuple[str, str]]) -> Result:
     if not steps:
         raise ValueError("a saga needs at least one step")
     if len({step_id for step_id, _ in steps}) != len(steps):
