@@ -152,6 +152,48 @@ def test_compensation_failure_marks_saga_failed_for_human_intervention():
     assert state.steps[0].status == StepStatus.SUCCEEDED  # never touched
 
 
+def test_compensation_failure_on_last_step_marks_saga_failed():
+    # Mirrors the test above, but the compensation that fails is the LAST one
+    # in the LIFO queue (reserve, the saga's very first step) rather than the
+    # first one attempted. Off-by-one bugs in queue draining tend to show up
+    # specifically at this boundary, so it's worth its own test rather than
+    # assuming the "first compensation fails" case generalizes.
+    state, out = feed(
+        started(),
+        StepSucceeded(S, "reserve"),
+        StepSucceeded(S, "charge"),
+        StepFailed(S, "ship", "out of stock"),
+        CompensationSucceeded(S, "charge"),
+        CompensationFailed(S, "reserve", "release rejected"),
+    )
+
+    assert out[-1] == []
+    assert state.status == SagaStatus.FAILED
+    assert state.steps[0].status == StepStatus.COMPENSATING  # reserve: stuck
+    assert state.steps[1].status == StepStatus.COMPENSATED   # charge: already undone
+    assert state.steps[2].status == StepStatus.FAILED        # ship: original failure
+
+
+# ---- structural edge cases ----
+
+def test_single_step_saga_completes_without_compensation():
+    state, _ = start_saga(S, [("charge", "ChargePayment")])
+    state, commands = decide(state, StepSucceeded(S, "charge"))
+
+    assert commands == []
+    assert state.status == SagaStatus.COMPLETED
+    assert state.steps[0].status == StepStatus.SUCCEEDED
+
+
+def test_single_step_saga_failure_needs_no_compensation():
+    state, _ = start_saga(S, [("charge", "ChargePayment")])
+    state, commands = decide(state, StepFailed(S, "charge", "declined"))
+
+    assert commands == []
+    assert state.status == SagaStatus.COMPENSATED  # nothing preceded it to undo
+    assert state.steps[0].status == StepStatus.FAILED
+
+
 # ---- idempotency ----
 
 def test_every_event_is_a_noop_when_delivered_twice():
@@ -184,6 +226,52 @@ def test_late_step_succeeded_after_compensation_started_is_ignored():
     assert commands == []
 
 
+# ---- terminal-state immutability ----
+# The COMPENSATED case above already proves late/duplicate events are
+# swallowed once a saga is terminal. These confirm the SAME contract holds
+# for the other two terminal statuses (COMPLETED, FAILED) rather than
+# assuming it generalizes.
+
+@pytest.mark.parametrize(
+    "event",
+    [StepSucceeded(S, "reserve"), StepSucceeded(S, "charge"), StepSucceeded(S, "ship")],
+    ids=["duplicate_reserve_succeeded", "duplicate_charge_succeeded", "duplicate_ship_succeeded"],
+)
+def test_completed_saga_ignores_duplicate_events(event):
+    state, _ = feed(
+        started(),
+        StepSucceeded(S, "reserve"),
+        StepSucceeded(S, "charge"),
+        StepSucceeded(S, "ship"),
+    )
+    again, commands = decide(state, event)
+
+    assert again == state
+    assert commands == []
+
+
+@pytest.mark.parametrize(
+    "event",
+    [StepSucceeded(S, "reserve"), StepSucceeded(S, "charge")],
+    ids=["duplicate_reserve_succeeded", "duplicate_charge_succeeded"],
+)
+def test_failed_saga_ignores_late_or_duplicate_events(event):
+    # Once an operator has been paged for human intervention, stray
+    # redelivered events from earlier in the saga's history must not keep
+    # mutating state out from under them.
+    state, _ = feed(
+        started(),
+        StepSucceeded(S, "reserve"),
+        StepSucceeded(S, "charge"),
+        StepFailed(S, "ship", "out of stock"),
+        CompensationFailed(S, "charge", "refund rejected"),
+    )
+    again, commands = decide(state, event)
+
+    assert again == state
+    assert commands == []
+
+
 # ---- invalid transitions ----
 
 @pytest.mark.parametrize(
@@ -208,6 +296,60 @@ def test_late_step_succeeded_after_compensation_started_is_ignored():
 def test_contradictory_events_raise(event):
     with pytest.raises(InvalidTransition):
         decide(started(), event)
+
+
+def test_step_failed_after_already_succeeded_raises():
+    # reserve already resolved SUCCEEDED (saga still RUNNING, non-terminal);
+    # a later FAILED for the same step contradicts the recorded outcome and
+    # must not be silently accepted.
+    state, _ = feed(started(), StepSucceeded(S, "reserve"))
+
+    with pytest.raises(InvalidTransition):
+        decide(state, StepFailed(S, "reserve", "contradicts recorded success"))
+
+
+def test_step_succeeded_after_already_failed_raises():
+    # ship already resolved FAILED and the saga is mid-compensation
+    # (COMPENSATING, not yet terminal) — distinct from the terminal-swallow
+    # tests above, this checks a step's own resolution can't be contradicted
+    # while the saga is still actively processing.
+    state, _ = feed(
+        started(),
+        StepSucceeded(S, "reserve"),
+        StepSucceeded(S, "charge"),
+        StepFailed(S, "ship", "out of stock"),
+    )
+
+    with pytest.raises(InvalidTransition):
+        decide(state, StepSucceeded(S, "ship"))
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        CompensationSucceeded(S, "reserve"),
+        CompensationFailed(S, "reserve", "x"),
+    ],
+    ids=[
+        "compensation_succeeded_out_of_lifo_order",
+        "compensation_failed_out_of_lifo_order",
+    ],
+)
+def test_compensation_ack_rejected_when_step_not_yet_dispatched_for_compensation(event):
+    # charge is the step currently being compensated (LIFO); reserve is still
+    # SUCCEEDED and hasn't been dispatched for compensation yet. An ack for
+    # reserve here would mean compensating out of order — this is a stronger
+    # check than "saga isn't compensating at all" above, since the saga IS
+    # compensating, just not this step yet.
+    state, _ = feed(
+        started(),
+        StepSucceeded(S, "reserve"),
+        StepSucceeded(S, "charge"),
+        StepFailed(S, "ship", "out of stock"),
+    )
+
+    with pytest.raises(InvalidTransition):
+        decide(state, event)
 
 
 # ---- purity / determinism ----
