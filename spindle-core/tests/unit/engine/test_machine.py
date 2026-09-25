@@ -4,9 +4,9 @@
 
 import pytest
 
-from src.spindle_core.engine.errors import InvalidTransition
-from src.spindle_core.engine.machine import decide, start_saga
-from src.spindle_core.engine.messages import (
+from spindle_core.engine.errors import InvalidTransition
+from spindle_core.engine.machine import decide, start_saga
+from spindle_core.engine.messages import (
     CompensationFailed,
     CompensationSucceeded,
     DispatchCompensation,
@@ -14,7 +14,7 @@ from src.spindle_core.engine.messages import (
     StepFailed,
     StepSucceeded,
 )
-from src.spindle_core.engine.states import SagaStatus, StepStatus
+from spindle_core.engine.states import SagaStatus, StepStatus
 
 S = "saga-1"
 STEPS = [
