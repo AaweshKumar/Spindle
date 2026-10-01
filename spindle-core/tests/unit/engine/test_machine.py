@@ -1,6 +1,9 @@
-# Component: Spindle Architecture
+# Component: Spindle Testing Framework
 # File: test_machine.py
-# Description: Source code module for the Spindle workflow orchestration platform.
+# Description: Custom Testing module to test the Saga's state machine.
+# Location: tests/unit/engine/test_machine.py
+# Created: 2026-9-26
+# Author: Claude.ai with Aawesh Kumar
 
 import pytest
 
