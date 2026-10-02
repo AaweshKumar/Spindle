@@ -11,9 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class OutboxRelay:
-    def __init__(
-        self, outbox: OutboxStore, bus: CommandBus, batch_size: int = 100
-    ) -> None:
+    def __init__(self, outbox: OutboxStore, bus: CommandBus, batch_size: int = 100) -> None:
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
         self._outbox = outbox
