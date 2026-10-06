@@ -15,7 +15,7 @@ import logging
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from spindle_core.tapestry.models import RequestConfig, SuccessCheck
 
@@ -32,7 +32,7 @@ class HttpResponse:
     status_code: int
     body: bytes
 
-    def json(self) -> dict:
+    def json(self) -> Any:
         return json.loads(self.body)
 
     def text(self) -> str:
@@ -129,7 +129,9 @@ def is_success(response: HttpResponse, check: SuccessCheck) -> bool:
 
     try:
         body = response.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
+        if not isinstance(body, dict):
+            raise ValueError("parsed JSON is not a dict")
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
         logger.warning(
             "response body is not valid JSON; treating as failure "
             "(status=%d, body_prefix=%r)",

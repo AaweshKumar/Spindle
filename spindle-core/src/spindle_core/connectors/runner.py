@@ -60,19 +60,15 @@ def run_connector(
 
     def _heartbeat_loop() -> None:
         """Send a heartbeat, sleep, repeat until *stop* is set."""
-        while not stop.wait(heartbeat_interval_seconds):
+        while True:
             try:
                 registry.heartbeat(worker_id)
             except Exception:
                 logger.exception(
                     "heartbeat failed for worker_id=%r; will retry", worker_id
                 )
-        # Send one final heartbeat before exiting so the TTL isn't the only
-        # signal of a clean shutdown (useful for observability).
-        try:
-            registry.heartbeat(worker_id)
-        except Exception:
-            pass
+            if stop.wait(heartbeat_interval_seconds):
+                break
 
     heartbeat_thread = threading.Thread(
         target=_heartbeat_loop,
