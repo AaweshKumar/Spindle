@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from dataclasses import asdict
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as SASession
 
 from spindle_core.engine import (
@@ -86,42 +87,56 @@ class PgSagaRepository:
         expected_version: int,
     ) -> None:
         with self._session_factory() as session:
-            with session.begin():
-                if expected_version == 0:
-                    # insert: saga must not exist yet
-                    session.add(SagaModel(
-                        saga_id=saga_id,
-                        state=_state_to_json(new_state),
-                        version=1,
-                    ))
-                else:
-                    # update with OCC check
-                    result = session.execute(
-                        update(SagaModel)
-                        .where(SagaModel.saga_id == saga_id, SagaModel.version == expected_version)
-                        .values(state=_state_to_json(new_state), version=expected_version + 1)
-                    )
-                    if result.rowcount == 0:
-                        raise ConcurrencyConflict(f"saga {saga_id} version mismatch")
+            try:
+                with session.begin():
+                    if expected_version == 0:
+                        # insert: saga must not exist yet
+                        session.add(SagaModel(
+                            saga_id=saga_id,
+                            state=_state_to_json(new_state),
+                            version=1,
+                        ))
+                    else:
+                        # update with OCC check
+                        result = session.execute(
+                            update(SagaModel)
+                            .where(SagaModel.saga_id == saga_id, SagaModel.version == expected_version)
+                            .values(state=_state_to_json(new_state), version=expected_version + 1)
+                        )
+                        if result.rowcount == 0:
+                            raise ConcurrencyConflict(f"saga {saga_id} version mismatch")
 
-                # outbox rows in the same transaction
-                for cmd in commands:
-                    session.add(OutboxModel(
-                        saga_id=saga_id,
-                        payload=_command_to_json(cmd),
-                        published=False,
-                    ))
+                    # outbox rows in the same transaction
+                    for cmd in commands:
+                        session.add(OutboxModel(
+                            saga_id=saga_id,
+                            payload=_command_to_json(cmd),
+                            published=False,
+                        ))
+            except IntegrityError as exc:
+                table = SagaModel.__table__
+                pk_name = table.primary_key.name
+                expected_constraint_name = pk_name if pk_name is not None else f"{table.name}_pkey"
+                
+                if (
+                    getattr(exc.orig, "pgcode", None) == "23505"
+                    and getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == expected_constraint_name
+                ):
+                    raise ConcurrencyConflict(f"saga {saga_id} already exists") from exc
+                raise
 
     # -- OutboxStore --
 
     def fetch_unsent(self, limit: int) -> list[OutboxRecord]:
+        """
+        single relay, at-least-once, duplicates possible after a crash between publish and mark_sent.
+        """
         with self._session_factory() as session:
             rows = session.execute(
                 select(OutboxModel)
                 .where(OutboxModel.published == False)
                 .order_by(OutboxModel.id)
                 .limit(limit)
-                .with_for_update(skip_locked=True)
             ).scalars().all()
             # detach before session closes
             return [

@@ -1,6 +1,5 @@
 """
 Unit tests for connectors/consumer.py (ConnectorConsumer).
-
 Both Redis and the HTTP client are mocked — no live services required.
 """
 
