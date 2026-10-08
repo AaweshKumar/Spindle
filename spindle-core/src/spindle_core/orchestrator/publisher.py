@@ -22,8 +22,8 @@ class OutboxRelay:
         """Send one batch, oldest first. Returns how many were sent."""
         records = self._outbox.fetch_unsent(self._batch_size)
         for record in records:
-            self._bus.publish(record.command)  # (1) hand to the post office
-            self._outbox.mark_sent(record.id)  # (2) cross it off the list
+            self._bus.publish(record.command)  
+            self._outbox.mark_sent(record.id)  
         return len(records)
 
     def run_forever(self, stop: threading.Event, poll_interval: float = 0.5) -> None:
