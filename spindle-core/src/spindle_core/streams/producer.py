@@ -1,15 +1,11 @@
-import json
 import logging
-import threading
 from dataclasses import asdict
 
 import redis
 
-from spindle_core.orchestrator.ports import CommandBus, OutboxRecord
+from .keys import STREAM_KEY
 
 logger = logging.getLogger(__name__)
-
-STREAM_KEY = "spindle:commands"
 
 
 def _serialize_command(cmd) -> dict[str, str]:
