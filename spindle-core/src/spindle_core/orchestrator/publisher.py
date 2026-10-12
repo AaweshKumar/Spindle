@@ -19,7 +19,11 @@ class OutboxRelay:
         self._batch_size = batch_size
 
     def relay_once(self) -> int:
-        """Send one batch, oldest first. Returns how many were sent."""
+        """Send one batch, oldest first. Returns how many were sent.
+
+        Note: publish and mark-sent are non-atomic, delivery is at-least-once,
+        and downstream consumers must be idempotent via idempotency_key.
+        """
         records = self._outbox.fetch_unsent(self._batch_size)
         for record in records:
             self._bus.publish(record.command)  
