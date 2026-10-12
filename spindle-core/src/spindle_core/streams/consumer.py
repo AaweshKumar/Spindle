@@ -1,12 +1,12 @@
 import logging
-import time
 from collections.abc import Callable
 
 import redis
 
+from .keys import STREAM_KEY
+
 logger = logging.getLogger(__name__)
 
-STREAM_KEY = "spindle:commands"
 GROUP_NAME = "spindle-workers"
 
 
@@ -72,7 +72,15 @@ def _reclaim_pending(r, stream, group, consumer_name, handler, idle_ms):
     """XPENDING + XCLAIM: pick up messages other consumers dropped."""
     try:
         pending = r.xpending_range(stream, group, "-", "+", count=10)
-    except redis.ResponseError:
+    except redis.ResponseError as e:
+        if "NOGROUP" in str(e):
+            return
+        logger.error(
+            "Unexpected ResponseError in _reclaim_pending on stream %s group %s: %s",
+            stream,
+            group,
+            e,
+        )
         return
 
     for entry in pending:
