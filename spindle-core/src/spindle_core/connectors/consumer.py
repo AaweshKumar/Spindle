@@ -18,6 +18,7 @@ import logging
 import redis
 
 from spindle_core.streams.consumer import consume_loop, ensure_group
+from spindle_core.streams.keys import RESULTS_STREAM_KEY
 from spindle_core.tapestry.loader import TapestryStore
 
 from .caller import HttpClient, UrllibHttpClient, call_endpoint, is_success
@@ -34,7 +35,8 @@ WORK_GROUP_NAME = "spindle-connectors"
 
 # All connector outcome events are published here so the orchestrator's
 # consumer can pick them up and drive the saga forward.
-RESULTS_STREAM_KEY = "spindle:results"
+# The constant is defined in streams/keys.py (single source of truth) and
+# imported above; it remains importable from this module for back-compat.
 
 # -------------------------------------------------------------------------
 
