@@ -10,6 +10,8 @@ dependencies = [
     "sqlalchemy>=2.0",
     "psycopg2-binary>=2.9",
     "redis>=4.0",
+    "pydantic>=2.0",
+    "alembic>=1.12",
 ]
 
 [build-system]
@@ -22,3 +24,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "httpx>=0.24",
+]
