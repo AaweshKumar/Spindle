@@ -23,7 +23,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -57,8 +57,46 @@ class Settings(BaseSettings):
     # cross-origin requests) — see module docstring for format.
     CORS_ALLOW_ORIGINS: list[str] = []
 
+    # -- Auth ----------------------------------------------------------------
+    # JWT_SECRET must be at least 32 characters so HS256 has adequate entropy.
+    JWT_SECRET: SecretStr
+    # 60 minutes default; bounded so misconfiguration cannot create tokens that
+    # last days (upper) or are useless (lower).
+    JWT_EXPIRE_MINUTES: int = 60
+    ADMIN_USERNAME: str
+    # ADMIN_PASSWORD_HASH must be an argon2 hash (starts with "$argon2").
+    # Validated at startup so a bcrypt or plaintext value fails fast rather
+    # than silently passing all logins or verifying with the wrong algorithm.
+    ADMIN_PASSWORD_HASH: SecretStr
+
     # -- Runtime environment -------------------------------------------------
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
+
+    @field_validator("JWT_SECRET")
+    @classmethod
+    def _jwt_secret_min_length(cls, v: SecretStr) -> SecretStr:
+        """Enforce a 32-character minimum so HS256 has sufficient entropy."""
+        if len(v.get_secret_value()) < 32:
+            raise ValueError("JWT_SECRET must be at least 32 characters")
+        return v
+
+    @field_validator("JWT_EXPIRE_MINUTES")
+    @classmethod
+    def _expire_minutes_bounds(cls, v: int) -> int:
+        """Bound the token lifetime to avoid misconfigured extremes."""
+        if not (1 <= v <= 1440):
+            raise ValueError("JWT_EXPIRE_MINUTES must be between 1 and 1440")
+        return v
+
+    @field_validator("ADMIN_PASSWORD_HASH")
+    @classmethod
+    def _hash_must_be_argon2(cls, v: SecretStr) -> SecretStr:
+        """Require an argon2 hash so plaintext passwords fail at startup."""
+        if not v.get_secret_value().startswith("$argon2"):
+            raise ValueError(
+                "ADMIN_PASSWORD_HASH must be an argon2 hash (starts with '$argon2')"
+            )
+        return v
 
 
 @lru_cache(maxsize=1)

@@ -19,6 +19,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from spindle_core.auth.router import router as auth_router
 from spindle_core.config import Settings, get_settings
 
 
@@ -57,6 +58,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Auth router (P2 will add sagas router here in a later task).
+    app.include_router(auth_router)
 
     return app
 
