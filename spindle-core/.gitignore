@@ -4,3 +4,5 @@ __pycache__/
 .venv/
 __pycache__/
 .pytest_cache/
+spindle-core/verify_spindle_decisions.sh
+spindle-core/verify_spindle_decisions.sh
