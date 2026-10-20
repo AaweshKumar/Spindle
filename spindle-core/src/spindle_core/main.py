@@ -19,6 +19,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from spindle_core.api.lifespan import make_lifespan
+from spindle_core.api.sagas import router as sagas_router
 from spindle_core.auth.router import router as auth_router
 from spindle_core.config import Settings, get_settings
 
@@ -34,8 +36,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             free of global state, which simplifies testing.
 
     Returns:
-        A fully configured FastAPI application.  No routers are mounted here;
-        they are wired in later tasks (P2+).
+        A fully configured FastAPI application with the auth and sagas routers
+        mounted and the outbox-relay lifespan wired in.
     """
     if settings is None:
         settings = get_settings()
@@ -46,7 +48,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # otherwise falls back to "0.0.0".
         version=_package_version(),
         description="Saga-orchestration platform.",
+        lifespan=make_lifespan(settings),
     )
+
+    # Settings override: every dependency that calls Depends(get_settings) —
+    # including auth — will receive the Settings instance passed to create_app.
+    # This is the single source of truth for configuration across all layers.
+    app.dependency_overrides[get_settings] = lambda: settings
 
     # CORS is the only middleware added at bootstrap.
     # Origins come exclusively from Settings, so the default (empty list)
@@ -59,8 +67,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Auth router (P2 will add sagas router here in a later task).
+    # Auth router (P1).
     app.include_router(auth_router)
+    # Sagas router (P2).
+    app.include_router(sagas_router)
 
     return app
 

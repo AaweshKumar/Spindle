@@ -21,6 +21,7 @@ output.  To read the actual value in application code, call:
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import SecretStr, field_validator
@@ -68,6 +69,16 @@ class Settings(BaseSettings):
     # Validated at startup so a bcrypt or plaintext value fails fast rather
     # than silently passing all logins or verifying with the wrong algorithm.
     ADMIN_PASSWORD_HASH: SecretStr
+
+    # -- Saga templates -------------------------------------------------------
+    # Directory that contains <name>@v<N>.yaml template files.
+    # Settings does NOT touch the filesystem; the template loader raises if the
+    # path does not exist.  A relative path is resolved from the working directory
+    # at startup time.
+    SAGA_TEMPLATES_DIR: Path = Path("saga_templates")
+    # Path to the tapestry YAML file (defines step types and their HTTP config).
+    # Same laziness contract as SAGA_TEMPLATES_DIR.
+    TAPESTRY_PATH: Path = Path("tapestry.yaml")
 
     # -- Runtime environment -------------------------------------------------
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
