@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from fastapi import Request
+from fastapi import Depends, Request
 
 from spindle_core.orchestrator.runner import Runner
 from spindle_core.persistence.repositories import PgSagaRepository
@@ -49,8 +49,16 @@ def load_tapestry_store(path: Path) -> TapestryStore:
     if not path.exists():
         raise TapestryLoadError(f"{path}: tapestry file not found")
 
+    if path.is_dir():
+        raise TapestryLoadError(f"{path}: path is a directory, not a file")
+
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise TapestryLoadError(f"{path}: cannot read file — {exc}") from exc
+
+    try:
+        raw = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         raise TapestryLoadError(f"{path}: invalid YAML — {exc}") from exc
 
@@ -61,7 +69,7 @@ def load_tapestry_store(path: Path) -> TapestryStore:
 
     try:
         return TapestryStore.from_dict(raw)
-    except (ValueError, KeyError) as exc:
+    except Exception as exc:
         raise TapestryLoadError(f"{path}: malformed tapestry — {exc}") from exc
 
 
@@ -92,16 +100,13 @@ def get_command_bus(request: Request) -> RedisCommandBus:
 
 
 def get_runner(
-    repo: PgSagaRepository = None,  # injected below via Depends
-    request: Request = None,
+    repo: PgSagaRepository = Depends(get_saga_repository),
 ) -> Runner:
     """Return a Runner wrapping the request-scoped PgSagaRepository.
 
-    FastAPI resolves sub-dependencies, so the actual signature used by
-    the router uses Depends(get_saga_repository).
+    FastAPI resolves ``get_saga_repository`` as a sub-dependency so the
+    repository is constructed once per request and shared with the handler.
     """
-    # Note: the router uses Depends(get_saga_repository) directly; this
-    # function is a named provider for external injection / testing.
     return Runner(repo)
 
 

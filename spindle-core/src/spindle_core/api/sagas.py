@@ -91,7 +91,7 @@ class SagaResponse(BaseModel):
 def start_saga_handler(
     body: StartSagaRequest,
     template_store: TemplateStore = Depends(get_template_store),
-    repo: PgSagaRepository = Depends(get_saga_repository),
+    runner: Runner = Depends(get_runner),
 ) -> SagaResponse:
     """Start a new saga from a named template.
 
@@ -118,7 +118,6 @@ def start_saga_handler(
     saga_id = str(uuid.uuid4())
     state, commands = start_saga(saga_id, steps)
 
-    runner = Runner(repo)
     try:
         runner.start(state, commands)
     except ConcurrencyConflict:

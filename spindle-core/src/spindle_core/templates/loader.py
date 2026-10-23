@@ -65,7 +65,12 @@ def _load_one(path: Path, tapestry: TapestryStore) -> SagaTemplate:
     template_name, version = _parse_filename(path)  # may raise
 
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise TemplateLoadError(f"{path}: cannot read file — {exc}") from exc
+
+    try:
+        raw = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         raise TemplateLoadError(f"{path}: invalid YAML — {exc}") from exc
 

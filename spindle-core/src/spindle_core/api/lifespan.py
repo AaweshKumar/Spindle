@@ -41,6 +41,37 @@ logger = logging.getLogger(__name__)
 _RELAY_JOIN_TIMEOUT = 5.0
 
 
+def _run_relay_supervised(
+    relay: OutboxRelay,
+    stop: threading.Event,
+) -> None:
+    """Run the relay with exponential-backoff restart on failure.
+
+    Loops until ``stop`` is set.  After each crash the function waits
+    ``backoff`` seconds (starting at 1, doubling to 30) before
+    restarting so a persistent external fault does not busy-loop.
+    After a clean return from ``run_forever`` (i.e. ``stop`` was set)
+    the loop exits normally.
+
+    Never logs URLs, passwords, or secrets — only the exception type
+    and message are surfaced.
+    """
+    _MIN_BACKOFF = 1.0
+    _MAX_BACKOFF = 30.0
+    backoff = _MIN_BACKOFF
+    while not stop.is_set():
+        try:
+            relay.run_forever(stop)
+            # Clean return means stop was set; exit loop.
+            backoff = _MIN_BACKOFF
+        except Exception:
+            logger.exception(
+                "outbox-relay crashed; restarting in %.0fs", backoff
+            )
+            stop.wait(backoff)
+            backoff = min(backoff * 2, _MAX_BACKOFF)
+
+
 def make_lifespan(settings: Settings) -> Callable[[FastAPI], AsyncGenerator[None, None]]:
     """Return an async context manager factory suitable for FastAPI(lifespan=…).
 
@@ -95,8 +126,8 @@ def make_lifespan(settings: Settings) -> Callable[[FastAPI], AsyncGenerator[None
 
             stop_event = threading.Event()
             relay_thread = threading.Thread(
-                target=relay.run_forever,
-                kwargs={"stop": stop_event},
+                target=_run_relay_supervised,
+                args=(relay, stop_event),
                 daemon=True,
                 name="outbox-relay",
             )

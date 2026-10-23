@@ -67,9 +67,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Auth router (P1).
+    # Auth router
     app.include_router(auth_router)
-    # Sagas router (P2).
+    # Sagas router
     app.include_router(sagas_router)
 
     return app
