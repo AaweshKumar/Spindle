@@ -18,7 +18,7 @@ import logging
 import redis
 
 from spindle_core.streams.consumer import consume_loop, ensure_group
-from spindle_core.streams.keys import RESULTS_STREAM_KEY
+from spindle_core.streams.keys import RESULTS_STREAM_KEY, WORK_STREAM_PREFIX
 from spindle_core.tapestry.loader import TapestryStore
 
 from .caller import HttpClient, UrllibHttpClient, call_endpoint, is_success
@@ -28,15 +28,13 @@ logger = logging.getLogger(__name__)
 
 # ---- Stream key constants -----------------------------------------------
 
-# Per-step-type work streams.  The orchestrator publishes DispatchStep /
-# DispatchCompensation commands here (via router.py, future task).
-WORK_STREAM_PREFIX = "spindle:work:"         # appended with step_type at runtime
+# WORK_STREAM_PREFIX is sourced from streams/keys.py (single source of truth)
+# and imported above.  It remains importable from this module and from
+# connectors/__init__.py for back-compat.
 WORK_GROUP_NAME = "spindle-connectors"
 
-# All connector outcome events are published here so the orchestrator's
-# consumer can pick them up and drive the saga forward.
-# The constant is defined in streams/keys.py (single source of truth) and
-# imported above; it remains importable from this module for back-compat.
+# RESULTS_STREAM_KEY is sourced from streams/keys.py and imported above;
+# it remains importable from this module for back-compat.
 
 # -------------------------------------------------------------------------
 
