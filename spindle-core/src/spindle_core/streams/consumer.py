@@ -1,4 +1,5 @@
 import logging
+import threading
 from collections.abc import Callable
 
 import redis
@@ -28,10 +29,15 @@ def consume_loop(
     block_ms: int = 2000,
     batch_size: int = 10,
     claim_idle_ms: int = 30_000,
+    stop: threading.Event | None = None,
 ):
     """
     Read from stream via XREADGROUP, call handler(message_id, fields) for each,
     then XACK. On startup and periodically, reclaim stuck messages via XPENDING+XCLAIM.
+
+    Returns normally when ``stop`` is set (checked once per block interval).
+    When ``stop`` is None the loop runs until the thread is killed (original
+    behaviour, preserved for all existing callers).
 
     handler signature: (message_id: str, fields: dict[str,str]) -> None
     handler must raise on failure so the message is NOT acked.
@@ -40,7 +46,7 @@ def consume_loop(
 
     claim_counter = 0
 
-    while True:
+    while stop is None or not stop.is_set():
         # every 10 iterations, try to reclaim old pending messages
         claim_counter += 1
         if claim_counter % 10 == 1:
