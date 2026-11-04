@@ -11,6 +11,11 @@ WORK_STREAM_PREFIX = "spindle:work:"
 # Dead-letter stream for commands that cannot be parsed or routed.
 DEAD_COMMANDS_STREAM_KEY = "spindle:dead:commands"
 
+# Dead-letter stream for result messages that cannot be decoded or processed.
+DEAD_RESULTS_STREAM_KEY = "spindle:dead:results"
+
 # Consumer-group names — kept together so all stream identities are visible in
 # one place.  Each group name is unique across the system.
 ROUTER_GROUP_NAME = "spindle-router"
+# Consumer group for the results consumer (orchestrator side).
+RESULTS_GROUP_NAME = "spindle-orchestrator"

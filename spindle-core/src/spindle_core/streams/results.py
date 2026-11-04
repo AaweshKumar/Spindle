@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from spindle_core.engine import (
     CompensationFailed,
@@ -17,13 +18,14 @@ from spindle_core.engine import (
 from spindle_core.engine.messages import Event
 from spindle_core.orchestrator.ports import ConcurrencyConflict
 from spindle_core.orchestrator.runner import Runner, UnknownSaga
+from .keys import DEAD_RESULTS_STREAM_KEY, RESULTS_GROUP_NAME  # noqa: F401 — intentional re-export
 
 logger = logging.getLogger(__name__)
 
-# DESIGN NOTE (D2): the results STREAM KEY is deliberately NOT defined here. It is single-sourced from
-# connectors.consumer.RESULTS_STREAM_KEY and passed to consume_loop(stream=...) by the composition root.
-# Do not add a duplicate constant: streams (L1) may not import connectors (L2a), and duplicating risks drift.
-RESULTS_GROUP_NAME = "spindle-orchestrator"
+# DESIGN NOTE (D2): RESULTS_STREAM_KEY and RESULTS_GROUP_NAME now live in streams/keys.py
+# (single source of truth for all stream/group identifiers).  RESULTS_GROUP_NAME is
+# imported from there above and re-exported so callers can still import it from this module.
+# Do not duplicate constants here: streams/ is L1 and must not import from connectors/ (L2a).
 
 # Wire-format field names, matching connectors/consumer.py:251-257.
 _TYPE = "type"
@@ -75,7 +77,10 @@ def decode_result(fields: dict[str, str]) -> Event:
     return CompensationFailed(saga_id=saga_id, step_id=step_id, reason=reason)
 
 
-def make_result_handler(runner: Runner):
+def make_result_handler(
+    runner: Runner,
+    dead_letter: Callable[[str, dict[str, str], str], None] | None = None,
+):
     """Return a handler compatible with streams.consumer.consume_loop.
 
     Acked (swallowed) exceptions:
@@ -86,6 +91,12 @@ def make_result_handler(runner: Runner):
     Re-raised (message retried via pending-entry reclaim):
         ConcurrencyConflict — optimistic-lock failure after all attempts
         Any other Exception — unexpected error; surface to the caller
+
+    When ``dead_letter`` is provided, the three acked exception classes above
+    additionally invoke ``dead_letter(message_id, fields, reason)`` before
+    returning.  ConcurrencyConflict and all other exceptions are never
+    dead-lettered and are re-raised exactly as when ``dead_letter`` is None.
+    If ``dead_letter`` itself raises, the exception propagates (message is not acked).
 
     Signature matches consume_loop's handler parameter:
         callable(message_id: str, fields: dict[str, str]) -> None
@@ -104,6 +115,8 @@ def make_result_handler(runner: Runner):
                 step_id,
                 exc,
             )
+            if dead_letter is not None:
+                dead_letter(message_id, fields, f"malformed result: {exc}")
             return
 
         try:
@@ -116,6 +129,12 @@ def make_result_handler(runner: Runner):
                 event.step_id,
                 exc,
             )
+            if dead_letter is not None:
+                dead_letter(
+                    message_id,
+                    fields,
+                    f"{type(exc).__name__}: {exc}",
+                )
             return
         except ConcurrencyConflict:
             # Exhausted all retry attempts inside Runner; let the stream re-deliver.
@@ -125,3 +144,26 @@ def make_result_handler(runner: Runner):
             raise
 
     return handle
+
+
+def make_dead_letter_writer(
+    redis_client,
+) -> Callable[[str, dict[str, str], str], None]:
+    """Return a callable that XADDs failed result messages to DEAD_RESULTS_STREAM_KEY.
+
+    Signature: (message_id: str, fields: dict[str, str], reason: str) -> None
+
+    The original fields are copied to the dead-letter entry.  If the original
+    fields already contain a "reason" key its value is preserved under
+    "original_reason" to avoid losing it.  Redis errors propagate to the caller
+    so the message is not acked.
+    """
+
+    def _write(message_id: str, fields: dict[str, str], reason: str) -> None:
+        dead_fields: dict[str, str] = dict(fields)
+        if "reason" in dead_fields:
+            dead_fields["original_reason"] = dead_fields["reason"]
+        dead_fields["reason"] = reason
+        redis_client.xadd(DEAD_RESULTS_STREAM_KEY, dead_fields)
+
+    return _write
