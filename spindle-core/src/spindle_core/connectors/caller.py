@@ -96,7 +96,10 @@ def build_request_body(config: RequestConfig, message_fields: dict[str, str]) ->
     become the empty string rather than raising.
 
     If config.field_mapping is empty, the full *message_fields* dict is
-    forwarded as-is.
+    forwarded as-is, **excluding** the ``idempotency_key`` field (which is
+    promoted to the ``Idempotency-Key`` HTTP header by :func:`call_endpoint`
+    rather than placed in the request body).  An explicit field_mapping that
+    maps a destination key to ``"idempotency_key"`` is still honoured.
     """
     if config.field_mapping:
         body_dict: dict[str, str] = {
@@ -104,7 +107,7 @@ def build_request_body(config: RequestConfig, message_fields: dict[str, str]) ->
             for dest, src in config.field_mapping.items()
         }
     else:
-        body_dict = dict(message_fields)
+        body_dict = {k: v for k, v in message_fields.items() if k != "idempotency_key"}
     return json.dumps(body_dict).encode()
 
 
@@ -156,9 +159,22 @@ def call_endpoint(
     message_fields: dict[str, str],
     client: HttpClient,
 ) -> HttpResponse:
-    """Build and send the HTTP request described by *config*."""
+    """Build and send the HTTP request described by *config*.
+
+    Header handling for idempotency:
+      * Any header in the merged set whose name compares equal to
+        ``"idempotency-key"`` (case-insensitive) is removed first.
+      * If ``message_fields["idempotency_key"]`` is present and non-empty,
+        ``Idempotency-Key`` is added with that value.
+      * If the field is absent or empty, no ``Idempotency-Key`` header is sent.
+    """
     body = build_request_body(config, message_fields)
     headers = {"Content-Type": "application/json", **config.headers}
+    # Remove any pre-existing idempotency header (any capitalisation).
+    headers = {k: v for k, v in headers.items() if k.lower() != "idempotency-key"}
+    idem_val = message_fields.get("idempotency_key", "")
+    if idem_val:
+        headers["Idempotency-Key"] = idem_val
     logger.debug("HTTP %s %s", config.method, config.url)
     return client.request(
         config.method,
