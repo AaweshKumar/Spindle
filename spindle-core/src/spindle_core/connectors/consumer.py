@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 import redis
 
@@ -62,6 +63,7 @@ class ConnectorConsumer:
         consumer_name: str,
         tracker: OutcomeTracker | None = None,
         http_client: HttpClient | None = None,
+        stop: threading.Event | None = None,
     ) -> None:
         self._r = redis_client
         self._tapestry = tapestry
@@ -70,11 +72,12 @@ class ConnectorConsumer:
         self._tracker = tracker if tracker is not None else OutcomeTracker()
         self._http = http_client if http_client is not None else UrllibHttpClient()
         self._stream = f"{WORK_STREAM_PREFIX}{step_type}"
+        self._stop = stop
 
     # -- public API --
 
     def run(self) -> None:
-        """Block and process messages until the process is killed."""
+        """Block and process messages until the process is killed or *stop* is set."""
         logger.info(
             "connector starting: step_type=%r stream=%r consumer=%r",
             self._step_type,
@@ -87,6 +90,7 @@ class ConnectorConsumer:
             self._handle_message,
             stream=self._stream,
             group=WORK_GROUP_NAME,
+            stop=self._stop,
         )
 
     def handle_once(self, message_id: str, fields: dict[str, str]) -> None:

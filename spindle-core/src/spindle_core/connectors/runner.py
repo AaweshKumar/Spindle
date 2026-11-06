@@ -32,9 +32,11 @@ def run_connector(
     *,
     heartbeat_interval_seconds: float = 15.0,
     http_client: HttpClient | None = None,
+    stop: threading.Event | None = None,
 ) -> None:
     """
-    Start the connector for *step_type*.  Blocks until the process is killed.
+    Start the connector for *step_type*.  Blocks until the process is killed
+    or *stop* is set.
 
     Spawns a daemon heartbeat thread that calls LivenessRegistry.heartbeat()
     every *heartbeat_interval_seconds*.  The default interval (15 s) is half
@@ -53,10 +55,14 @@ def run_connector(
         heartbeat_interval_seconds: How often to call LivenessRegistry.heartbeat().
         http_client:                Override for testing; defaults to
                                     UrllibHttpClient.
+        stop:                       Optional Event; when set, the connector loop
+                                    exits cleanly.  If None, a new Event is
+                                    created internally (original behaviour).
     """
+    if stop is None:
+        stop = threading.Event()
     registry = LivenessRegistry(redis_client)
     tracker = OutcomeTracker()
-    stop = threading.Event()
 
     def _heartbeat_loop() -> None:
         """Send a heartbeat, sleep, repeat until *stop* is set."""
@@ -91,6 +97,7 @@ def run_connector(
         consumer_name=consumer_name,
         tracker=tracker,
         http_client=http_client,
+        stop=stop,
     )
 
     try:

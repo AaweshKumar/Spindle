@@ -37,3 +37,4 @@ dev = [
 
 [project.scripts]
 spindle-results-consumer = "spindle_core.results_consumer:main"
+spindle-worker = "spindle_core.worker_process:main"
