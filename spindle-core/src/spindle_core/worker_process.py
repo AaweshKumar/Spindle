@@ -18,7 +18,7 @@ import threading
 from pathlib import Path
 
 import redis
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from spindle_core.api.dependencies import TapestryLoadError, load_tapestry_store
@@ -45,6 +45,13 @@ class WorkerSettings(BaseSettings):
     TAPESTRY_PATH: Path = Path("tapestry.yaml")
     STEP_TYPE: str | None = None
     HEARTBEAT_INTERVAL_SECONDS: float = 15.0
+
+    @field_validator("HEARTBEAT_INTERVAL_SECONDS")
+    @classmethod
+    def _validate_heartbeat_interval(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("HEARTBEAT_INTERVAL_SECONDS must be positive")
+        return v
 
 
 def main(argv: list[str] | None = None) -> int:

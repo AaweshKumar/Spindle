@@ -329,3 +329,51 @@ class TestMainRunConnectorRaises:
             main(argv=[])
 
         mock_redis.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# WorkerSettings: HEARTBEAT_INTERVAL_SECONDS validation (GAP-5)
+# ---------------------------------------------------------------------------
+
+class TestWorkerSettingsHeartbeatIntervalValidation:
+    def test_zero_interval_raises_validation_error(self, monkeypatch):
+        from pydantic import ValidationError
+
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setenv("HEARTBEAT_INTERVAL_SECONDS", "0")
+        with pytest.raises(ValidationError):
+            WorkerSettings()
+
+    def test_negative_interval_raises_validation_error(self, monkeypatch):
+        from pydantic import ValidationError
+
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setenv("HEARTBEAT_INTERVAL_SECONDS", "-1.0")
+        with pytest.raises(ValidationError):
+            WorkerSettings()
+
+    def test_fractional_positive_interval_accepted(self, monkeypatch):
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setenv("HEARTBEAT_INTERVAL_SECONDS", "0.5")
+        settings = WorkerSettings()
+        assert settings.HEARTBEAT_INTERVAL_SECONDS == 0.5
+
+    def test_default_interval_is_15(self, monkeypatch):
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+        settings = WorkerSettings()
+        assert settings.HEARTBEAT_INTERVAL_SECONDS == 15.0
+
+    def test_main_returns_2_when_heartbeat_zero_from_env(self, monkeypatch):
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+        monkeypatch.setenv("HEARTBEAT_INTERVAL_SECONDS", "0")
+        monkeypatch.setenv("STEP_TYPE", STEP_TYPE)
+
+        with patch("spindle_core.worker_process.load_tapestry_store",
+                   return_value=_make_tapestry_mock()), \
+             patch("spindle_core.worker_process.run_connector") as mock_rc, \
+             patch("spindle_core.worker_process.redis.Redis.from_url"), \
+             patch("spindle_core.worker_process.signal.signal"):
+            result = main(argv=[])
+
+        assert result == 2
+        mock_rc.assert_not_called()
