@@ -19,6 +19,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from spindle_core.api.health import router as health_router
 from spindle_core.api.lifespan import make_lifespan
 from spindle_core.api.sagas import router as sagas_router
 from spindle_core.auth.router import router as auth_router
@@ -71,6 +72,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     # Sagas router
     app.include_router(sagas_router)
+    # Health router (unauthenticated)
+    app.include_router(health_router)
 
     return app
 

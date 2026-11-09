@@ -176,6 +176,7 @@ def make_lifespan(settings: Settings) -> Callable[[FastAPI], AsyncGenerator[None
                 name="outbox-relay",
             )
             relay_thread.start()
+            app.state.relay_thread = relay_thread
 
             # 7. Command router in a daemon thread.
             # Reads spindle:commands and fans out to spindle:work:{step_type}.
@@ -189,6 +190,7 @@ def make_lifespan(settings: Settings) -> Callable[[FastAPI], AsyncGenerator[None
                 name="command-router",
             )
             router_thread.start()
+            app.state.router_thread = router_thread
 
             logger.info("Spindle startup complete")
             yield  # application is running
