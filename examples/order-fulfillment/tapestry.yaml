@@ -1,0 +1,26 @@
+steps:
+  - step_type: CreateOrder
+    execute: {url: "http://mock-services:9000/orders/create", method: POST, field_mapping: {order_id: saga_id, step_id: step_id}, timeout_seconds: 10}
+    execute_success_check: {ok_status_codes: [200], body_field: status, body_field_value: created}
+    compensation:
+      request: {url: "http://mock-services:9000/orders/cancel", method: POST, field_mapping: {order_id: saga_id, step_id: step_id}, timeout_seconds: 10}
+      success_check: {ok_status_codes: [200]}
+  - step_type: ReserveInventory
+    execute: {url: "http://mock-services:9000/inventory/reserve", method: POST, field_mapping: {order_id: saga_id, step_id: step_id}, timeout_seconds: 10}
+    execute_success_check: {ok_status_codes: [200], body_field: status, body_field_value: reserved}
+    compensation:
+      request: {url: "http://mock-services:9000/inventory/release", method: POST, field_mapping: {order_id: saga_id, step_id: step_id}, timeout_seconds: 10}
+      success_check: {ok_status_codes: [200]}
+  - step_type: ChargePayment
+    execute: {url: "http://mock-services:9000/payments/charge", method: POST, field_mapping: {order_id: saga_id, step_id: step_id}, timeout_seconds: 10}
+    execute_success_check: {ok_status_codes: [200], body_field: status, body_field_value: charged}
+    compensation:
+      request: {url: "http://mock-services:9000/payments/refund", method: POST, field_mapping: {order_id: saga_id, step_id: step_id}, timeout_seconds: 10}
+      success_check: {ok_status_codes: [200]}
+  - step_type: ShipOrder
+    execute: {url: "http://mock-services:9000/shipping/ship", method: POST, field_mapping: {order_id: saga_id, step_id: step_id}, timeout_seconds: 10}
+    execute_success_check: {ok_status_codes: [200], body_field: status, body_field_value: shipped}
+    compensation:
+      request: {url: "http://mock-services:9000/shipping/cancel", method: POST, field_mapping: {order_id: saga_id, step_id: step_id}, timeout_seconds: 10}
+      success_check: {ok_status_codes: [200]}
+

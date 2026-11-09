@@ -1,0 +1,6 @@
+steps:
+  - {id: create-order, type: CreateOrder}
+  - {id: reserve-inventory, type: ReserveInventory}
+  - {id: charge-payment, type: ChargePayment}
+  - {id: ship-order, type: ShipOrder}
+
