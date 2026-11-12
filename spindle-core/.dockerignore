@@ -1,0 +1,14 @@
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+tests
+.git
+.gitignore
+.gitattributes
+.env
+.env.*
+Dockerfile
+.dockerignore
+verify_spindle_decisions.sh
+

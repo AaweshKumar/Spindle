@@ -1,0 +1,103 @@
+name: spindle
+
+x-spindle-build: &spindle-build
+  build:
+    context: ./spindle-core
+  image: spindle-core:local
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-spindle}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-spindle}
+  REDIS_URL: redis://redis:6379/0
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+  ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+  ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?ADMIN_PASSWORD_HASH is required}
+  CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-[]}
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-spindle}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-spindle}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:8.2
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    <<: *spindle-build
+    command: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-spindle}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-spindle}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *spindle-build
+    environment:
+      <<: *app-env
+      TAPESTRY_PATH: /app/config/tapestry.yaml
+      SAGA_TEMPLATES_DIR: /app/config/templates
+    volumes:
+      - ./examples/order-fulfillment/tapestry.yaml:/app/config/tapestry.yaml:ro
+      - ./examples/order-fulfillment/templates:/app/config/templates:ro
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    restart: unless-stopped
+    stop_grace_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 10s
+      timeout: 8s
+      retries: 5
+      start_period: 20s
+
+  results-consumer:
+    <<: *spindle-build
+    command: ["spindle-results-consumer"]
+    environment: *app-env
+    restart: unless-stopped
+    stop_grace_period: 15s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  redisdata:
+

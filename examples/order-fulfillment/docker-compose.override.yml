@@ -1,0 +1,72 @@
+# ==============================================================================
+# Run command:
+#   docker compose -f docker-compose.yml -f examples/order-fulfillment/docker-compose.override.yml up --build -d
+#
+# Note: MOCK_FAIL (comma list of shops: orders,inventory,payments,shipping) pre-fails shops.
+# ==============================================================================
+
+x-worker-base: &worker-base
+  build:
+    context: ./spindle-core
+  image: spindle-core:local
+  command: ["spindle-worker"]
+  volumes:
+    - ./examples/order-fulfillment/tapestry.yaml:/app/config/tapestry.yaml:ro
+  restart: unless-stopped
+  stop_grace_period: 40s
+  depends_on:
+    redis:
+      condition: service_healthy
+    mock-services:
+      condition: service_healthy
+
+services:
+  mock-services:
+    image: python:3.14.7-slim
+    user: "10001:10001"
+    command: ["python", "/app/mock_services.py"]
+    volumes:
+      - ./examples/order-fulfillment/mock_services.py:/app/mock_services.py:ro
+    environment:
+      MOCK_HOST: "0.0.0.0"
+      MOCK_PORT: 9000
+      MOCK_FAIL: ${MOCK_FAIL:-}
+    ports:
+      - "127.0.0.1:${MOCK_ADMIN_PORT:-9000}:9000"
+    restart: unless-stopped
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  worker-create-order:
+    <<: *worker-base
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      STEP_TYPE: CreateOrder
+      TAPESTRY_PATH: /app/config/tapestry.yaml
+
+  worker-reserve-inventory:
+    <<: *worker-base
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      STEP_TYPE: ReserveInventory
+      TAPESTRY_PATH: /app/config/tapestry.yaml
+
+  worker-charge-payment:
+    <<: *worker-base
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      STEP_TYPE: ChargePayment
+      TAPESTRY_PATH: /app/config/tapestry.yaml
+
+  worker-ship-order:
+    <<: *worker-base
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      STEP_TYPE: ShipOrder
+      TAPESTRY_PATH: /app/config/tapestry.yaml
+
