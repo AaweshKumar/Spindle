@@ -28,6 +28,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = ["e2e: end-to-end tests that need the live compose stack"]
 # TODO: drop when starlette.testclient is moved to httpx2 (see D-R33).
 filterwarnings = [
     "ignore:Using .httpx. with .starlette.testclient. is deprecated:starlette.exceptions.StarletteDeprecationWarning",
