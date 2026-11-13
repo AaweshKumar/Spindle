@@ -6,7 +6,7 @@
 
 Provides:
   POST /sagas  — start a new saga from a named template
-  GET  /sagas/{saga_id} — fetch the current status of a saga
+  GET  /sagas/{saga_id} — fetch the current status and step details of a saga
 
 Both endpoints are protected by ``get_current_user`` (declared at router level
 so every future route automatically requires auth without per-route boilerplate).
@@ -77,10 +77,24 @@ class StartSagaRequest(BaseModel):
 
 
 class SagaResponse(BaseModel):
-    """Response for POST /sagas and GET /sagas/{saga_id}."""
+    """Response for POST /sagas."""
 
     saga_id: str
     status: str
+
+
+class StepResponse(BaseModel):
+    """Step execution status within a saga."""
+
+    step_id: str
+    step_type: str
+    status: str
+
+
+class SagaDetailResponse(SagaResponse):
+    """Detailed response for GET /sagas/{saga_id} including step states."""
+
+    steps: list[StepResponse]
 
 
 # ---------------------------------------------------------------------------
@@ -130,20 +144,28 @@ def start_saga_handler(
     return SagaResponse(saga_id=saga_id, status=state.status.value)
 
 
-@router.get("/{saga_id}", response_model=SagaResponse)
+@router.get("/{saga_id}", response_model=SagaDetailResponse)
 def get_saga_handler(
     saga_id: Annotated[str, Field(max_length=64)],
     repo: PgSagaRepository = Depends(get_saga_repository),
-) -> SagaResponse:
-    """Return the current status of a saga.
-
-    Only ``saga_id`` and ``status`` are returned; internal fields such as
-    step-level state are intentionally not exposed at this endpoint.
-    """
+) -> SagaDetailResponse:
+    """Return the current status and step details of a saga."""
     loaded = repo.load(saga_id)
     if loaded is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Saga not found",
         )
-    return SagaResponse(saga_id=loaded.state.saga_id, status=loaded.state.status.value)
+    steps = [
+        StepResponse(
+            step_id=step.step_id,
+            step_type=step.step_type,
+            status=step.status.value,
+        )
+        for step in loaded.state.steps
+    ]
+    return SagaDetailResponse(
+        saga_id=loaded.state.saga_id,
+        status=loaded.state.status.value,
+        steps=steps,
+    )

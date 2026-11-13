@@ -24,6 +24,7 @@ from spindle_core.api.lifespan import make_lifespan
 from spindle_core.api.sagas import router as sagas_router
 from spindle_core.auth.router import router as auth_router
 from spindle_core.config import Settings, get_settings
+from spindle_core.templates.router import router as templates_router
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -72,6 +73,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     # Sagas router
     app.include_router(sagas_router)
+    # Templates router
+    app.include_router(templates_router)
     # Health router (unauthenticated)
     app.include_router(health_router)
 

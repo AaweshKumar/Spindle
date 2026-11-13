@@ -161,6 +161,11 @@ class TemplateStore:
             raise TemplateNotFound(f"No template named {name!r}")
         return tuple(sorted(v))
 
+    def all(self) -> list[SagaTemplate]:
+        """Return all registered templates sorted by name and version ascending."""
+        templates = [t for versions in self._by_name.values() for t in versions.values()]
+        return sorted(templates, key=lambda t: (t.name, t.version))
+
     @classmethod
     def from_dir(cls, directory: Path, tapestry: TapestryStore) -> "TemplateStore":
         """Load and validate all templates from *directory*.
