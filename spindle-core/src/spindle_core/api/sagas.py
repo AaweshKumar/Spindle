@@ -6,6 +6,7 @@
 
 Provides:
   POST /sagas  — start a new saga from a named template
+  GET  /sagas  — list sagas newest first with keyset pagination and status filter
   GET  /sagas/{saga_id} — fetch the current status and step details of a saga
 
 Both endpoints are protected by ``get_current_user`` (declared at router level
@@ -18,22 +19,24 @@ database calls.  Using async def with blocking I/O would starve the event loop.
 
 from __future__ import annotations
 
+from datetime import datetime
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from spindle_core.api.cursor import InvalidCursor, decode_cursor, encode_cursor
 from spindle_core.api.dependencies import (
     get_runner,
     get_saga_repository,
     get_template_store,
 )
 from spindle_core.auth.dependencies import get_current_user
-from spindle_core.engine import start_saga
+from spindle_core.engine import SagaStatus, start_saga
 from spindle_core.orchestrator.ports import ConcurrencyConflict
 from spindle_core.orchestrator.runner import Runner
-from spindle_core.persistence.repositories import PgSagaRepository
+from spindle_core.persistence.repositories import PgSagaRepository, SagaSummary
 from spindle_core.templates.loader import TemplateStore
 from spindle_core.templates.models import TemplateNotFound
 
@@ -92,9 +95,41 @@ class StepResponse(BaseModel):
 
 
 class SagaDetailResponse(SagaResponse):
-    """Detailed response for GET /sagas/{saga_id} including step states."""
+    """Detailed response for saga views including metadata and step states."""
 
+    template_name: str | None
+    template_version: int | None
+    created_at: datetime
+    updated_at: datetime
     steps: list[StepResponse]
+
+
+class SagaListResponse(BaseModel):
+    """Paginated list of sagas with opaque continuation cursor."""
+
+    items: list[SagaDetailResponse]
+    next_cursor: str | None
+
+
+def _to_detail(summary: SagaSummary) -> SagaDetailResponse:
+    """Project a repository SagaSummary into an API detail response."""
+    steps = [
+        StepResponse(
+            step_id=step.step_id,
+            step_type=step.step_type,
+            status=step.status.value,
+        )
+        for step in summary.state.steps
+    ]
+    return SagaDetailResponse(
+        saga_id=summary.state.saga_id,
+        status=summary.state.status.value,
+        template_name=summary.template_name,
+        template_version=summary.template_version,
+        created_at=summary.created_at,
+        updated_at=summary.updated_at,
+        steps=steps,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -107,19 +142,7 @@ def start_saga_handler(
     template_store: TemplateStore = Depends(get_template_store),
     runner: Runner = Depends(get_runner),
 ) -> SagaResponse:
-    """Start a new saga from a named template.
-
-    Flow:
-    1. Resolve the template (name + optional version) from the store.
-    2. Convert steps to (step_id, step_type) pairs expected by the engine.
-    3. Call engine.start_saga to get initial state and commands.
-    4. Persist via Runner.start (which calls repo.save at version=0).
-    5. Return the saga_id and status string.
-
-    ConcurrencyConflict on Runner.start is returned as 409.  UUID collisions
-    are astronomically unlikely but the engine's unique-insert guard catches
-    them, so the 409 path is reachable in theory.
-    """
+    """Start a new saga from a named template."""
     try:
         template = template_store.get(body.template, body.version)
     except TemplateNotFound:
@@ -133,7 +156,12 @@ def start_saga_handler(
     state, commands = start_saga(saga_id, steps)
 
     try:
-        runner.start(state, commands)
+        runner.start(
+            state,
+            commands,
+            template_name=template.name,
+            template_version=template.version,
+        )
     except ConcurrencyConflict:
         # UUID collision or duplicate — should not happen in practice.
         raise HTTPException(
@@ -144,28 +172,48 @@ def start_saga_handler(
     return SagaResponse(saga_id=saga_id, status=state.status.value)
 
 
+@router.get("", response_model=SagaListResponse)
+def list_sagas_handler(
+    status_filter: Annotated[SagaStatus | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    cursor: Annotated[str | None, Query(max_length=512)] = None,
+    repo: PgSagaRepository = Depends(get_saga_repository),
+) -> SagaListResponse:
+    """List sagas newest first with optional status filtering and keyset pagination."""
+    after = None
+    if cursor is not None:
+        try:
+            after = decode_cursor(cursor)
+        except InvalidCursor:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Invalid cursor",
+            )
+
+    rows = repo.list_summaries(status=status_filter, limit=limit + 1, after=after)
+    page = rows[:limit]
+    next_cursor = (
+        encode_cursor(page[-1].created_at, page[-1].state.saga_id)
+        if len(rows) > limit
+        else None
+    )
+    return SagaListResponse(
+        items=[_to_detail(r) for r in page],
+        next_cursor=next_cursor,
+    )
+
+
 @router.get("/{saga_id}", response_model=SagaDetailResponse)
 def get_saga_handler(
     saga_id: Annotated[str, Field(max_length=64)],
     repo: PgSagaRepository = Depends(get_saga_repository),
 ) -> SagaDetailResponse:
     """Return the current status and step details of a saga."""
-    loaded = repo.load(saga_id)
-    if loaded is None:
+    summary = repo.get_summary(saga_id)
+    if summary is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Saga not found",
         )
-    steps = [
-        StepResponse(
-            step_id=step.step_id,
-            step_type=step.step_type,
-            status=step.status.value,
-        )
-        for step in loaded.state.steps
-    ]
-    return SagaDetailResponse(
-        saga_id=loaded.state.saga_id,
-        status=loaded.state.status.value,
-        steps=steps,
-    )
+    return _to_detail(summary)
+

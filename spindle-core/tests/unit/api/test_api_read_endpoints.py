@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,7 @@ from spindle_core.engine.messages import DispatchStep
 from spindle_core.engine.saga import SagaState, StepState
 from spindle_core.engine.states import SagaStatus, StepStatus
 from spindle_core.main import create_app
-from spindle_core.orchestrator.ports import LoadedSaga
+from spindle_core.persistence.repositories import SagaSummary
 from spindle_core.templates.loader import TemplateStore
 from spindle_core.templates.models import SagaTemplate, StepRef
 
@@ -128,11 +129,19 @@ def test_get_saga_detail_with_steps() -> None:
             StepState("s4", "TypeD", StepStatus.PENDING),
         ),
     )
-    loaded = LoadedSaga(state=state, version=3)
+    t1 = datetime(2026, 11, 14, 8, 0, 0, tzinfo=timezone.utc)
+    t2 = datetime(2026, 11, 14, 8, 5, 0, tzinfo=timezone.utc)
+    summary = SagaSummary(
+        state=state,
+        template_name="order-fulfillment",
+        template_version=1,
+        created_at=t1,
+        updated_at=t2,
+    )
 
     class FakeRepo:
-        def load(self, saga_id: str) -> LoadedSaga | None:
-            return loaded if saga_id == "saga-compensating" else None
+        def get_summary(self, saga_id: str) -> SagaSummary | None:
+            return summary if saga_id == "saga-compensating" else None
 
     app.dependency_overrides[get_saga_repository] = lambda: FakeRepo()
 
@@ -140,9 +149,24 @@ def test_get_saga_detail_with_steps() -> None:
     res = client.get("/sagas/saga-compensating")
     assert res.status_code == 200
     data = res.json()
-    assert set(data.keys()) == {"saga_id", "status", "steps"}
+    assert set(data.keys()) == {
+        "saga_id",
+        "status",
+        "template_name",
+        "template_version",
+        "created_at",
+        "updated_at",
+        "steps",
+    }
     assert data["saga_id"] == "saga-compensating"
     assert data["status"] == "COMPENSATING"
+    assert data["template_name"] == "order-fulfillment"
+    assert data["template_version"] == 1
+    c_at = datetime.fromisoformat(data["created_at"])
+    u_at = datetime.fromisoformat(data["updated_at"])
+    assert c_at.tzinfo is not None and c_at.tzinfo.utcoffset(c_at) is not None
+    assert u_at.tzinfo is not None and u_at.tzinfo.utcoffset(u_at) is not None
+    assert c_at < u_at
     for step in data["steps"]:
         assert set(step.keys()) == {"step_id", "step_type", "status"}
         assert isinstance(step["status"], str)
@@ -160,7 +184,7 @@ def test_get_saga_not_found() -> None:
     app.dependency_overrides[get_current_user] = lambda: User(username="admin")
 
     class EmptyRepo:
-        def load(self, saga_id: str) -> LoadedSaga | None:
+        def get_summary(self, saga_id: str) -> SagaSummary | None:
             return None
 
     app.dependency_overrides[get_saga_repository] = lambda: EmptyRepo()
@@ -188,10 +212,12 @@ def test_post_sagas_regression() -> None:
         def __init__(self) -> None:
             self.recorded_state: SagaState | None = None
             self.recorded_commands: list[Any] | None = None
+            self.recorded_kwargs: dict[str, Any] = {}
 
-        def start(self, state: SagaState, commands: list[Any]) -> None:
+        def start(self, state: SagaState, commands: list[Any], **kwargs: Any) -> None:
             self.recorded_state = state
             self.recorded_commands = list(commands)
+            self.recorded_kwargs = kwargs
 
     runner = FakeRunner()
     app.dependency_overrides[get_runner] = lambda: runner
@@ -202,6 +228,8 @@ def test_post_sagas_regression() -> None:
     data = res.json()
     assert set(data.keys()) == {"saga_id", "status"}
     assert data["status"] == "RUNNING"
+    assert runner.recorded_kwargs.get("template_name") == "order-flow"
+    assert runner.recorded_kwargs.get("template_version") == 1
     assert runner.recorded_state is not None
     assert runner.recorded_state.steps[0].status == StepStatus.DISPATCHED
     assert runner.recorded_commands is not None
@@ -220,7 +248,25 @@ def test_openapi_schemas_and_security() -> None:
     sagas_get_200 = schema["paths"]["/sagas/{saga_id}"]["get"]["responses"]["200"]
     ref = sagas_get_200["content"]["application/json"]["schema"]["$ref"]
     assert ref.endswith("SagaDetailResponse")
-    assert "steps" in schema["components"]["schemas"]["SagaDetailResponse"]["properties"]
+    detail_props = schema["components"]["schemas"]["SagaDetailResponse"]["properties"]
+    assert "steps" in detail_props
+    assert "template_name" in detail_props
+    assert "template_version" in detail_props
+    assert "created_at" in detail_props
+    assert "updated_at" in detail_props
+
+    list_get = schema["paths"]["/sagas"]["get"]
+    assert bool(list_get.get("security"))
+    list_200_ref = list_get["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert list_200_ref.endswith("SagaListResponse")
+    query_params = {p["name"]: p for p in list_get.get("parameters", []) if p.get("in") == "query"}
+    assert "status" in query_params
+    assert "limit" in query_params
+    assert "cursor" in query_params
+    limit_schema = query_params["limit"].get("schema", {})
+    assert limit_schema.get("minimum") == 1
+    assert limit_schema.get("maximum") == 200
+    assert limit_schema.get("default") == 50
 
     sagas_post_201 = schema["paths"]["/sagas"]["post"]["responses"]["201"]
     post_ref = sagas_post_201["content"]["application/json"]["schema"]["$ref"]
