@@ -23,9 +23,14 @@ class Runner:
         self._repo = repo
         self._max_attempts = max_attempts
 
-    def start(self, state: SagaState, commands: Sequence[Command]) -> None:
+    def start(self, state: SagaState, commands: Sequence[Command], *, template_name: str | None = None, template_version: int | None = None) -> None:
         """Persist the output of start_saga(). Version 0 = 'must not exist yet'."""
-        self._repo.save(state.saga_id, state, commands, expected_version=0)
+        if (template_name is None) != (template_version is None):
+            raise ValueError("template_name and template_version must both be given or both omitted")
+        if template_name is not None:
+            self._repo.save(state.saga_id, state, commands, expected_version=0, template_name=template_name, template_version=template_version)
+        else:
+            self._repo.save(state.saga_id, state, commands, expected_version=0)
 
     def handle_event(self, saga_id: str, event: Event) -> None:
         """Returns only after the result is durably saved. Caller acks AFTER this returns."""

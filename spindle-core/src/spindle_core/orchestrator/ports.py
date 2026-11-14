@@ -34,10 +34,14 @@ class SagaRepository(Protocol):
         new_state: SagaState,
         commands: Sequence[Command],
         expected_version: int,
+        *,
+        template_name: str | None = None,
+        template_version: int | None = None,
     ) -> None:
         """Atomically write the state AND queue the commands, or neither.
 
         Raises ConcurrencyConflict if the stored version != expected_version.
+        template_name/template_version are stored only when the saga is first created.
         """
         ...
 

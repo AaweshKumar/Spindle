@@ -1,7 +1,8 @@
 from collections.abc import Sequence
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, tuple_, update
 from sqlalchemy.exc import IntegrityError
 
 from spindle_core.engine import (
@@ -60,6 +61,29 @@ def _command_from_json(data: dict) -> Command:
     raise ValueError(f"unknown command type: {kind}")
 
 
+# -- summary dataclass --
+
+@dataclass(frozen=True)
+class SagaSummary:
+    """Lightweight projection of a saga row for list and detail views."""
+
+    state: SagaState
+    template_name: str | None
+    template_version: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+def _row_to_summary(row: SagaModel) -> SagaSummary:
+    return SagaSummary(
+        state=_state_from_json(row.state),
+        template_name=row.template_name,
+        template_version=row.template_version,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
 # -- repository --
 
 class PgSagaRepository:
@@ -83,7 +107,16 @@ class PgSagaRepository:
         new_state: SagaState,
         commands: Sequence[Command],
         expected_version: int,
+        *,
+        template_name: str | None = None,
+        template_version: int | None = None,
     ) -> None:
+        """Atomically write state and commands; optionally store template metadata on insert."""
+        if (template_name is None) != (template_version is None):
+            raise ValueError("template_name and template_version must both be given or both omitted")
+        if template_name is not None and expected_version != 0:
+            raise ValueError("template metadata can only be set when creating a new saga (expected_version=0)")
+
         with self._session_factory() as session:
             try:
                 with session.begin():
@@ -93,13 +126,21 @@ class PgSagaRepository:
                             saga_id=saga_id,
                             state=_state_to_json(new_state),
                             version=1,
+                            status=new_state.status.value,
+                            template_name=template_name,
+                            template_version=template_version,
                         ))
                     else:
-                        # update with OCC check
+                        # update with OCC check; bump updated_at to track transitions
                         result = session.execute(
                             update(SagaModel)
                             .where(SagaModel.saga_id == saga_id, SagaModel.version == expected_version)
-                            .values(state=_state_to_json(new_state), version=expected_version + 1)
+                            .values(
+                                state=_state_to_json(new_state),
+                                version=expected_version + 1,
+                                status=new_state.status.value,
+                                updated_at=func.now(),
+                            )
                         )
                         if result.rowcount == 0:
                             raise ConcurrencyConflict(f"saga {saga_id} version mismatch")
@@ -122,6 +163,39 @@ class PgSagaRepository:
                 ):
                     raise ConcurrencyConflict(f"saga {saga_id} already exists") from exc
                 raise
+
+    def get_summary(self, saga_id: str) -> SagaSummary | None:
+        """Return a SagaSummary for the given saga, or None if not found."""
+        with self._session_factory() as session:
+            row = session.get(SagaModel, saga_id)
+            if row is None:
+                return None
+            return _row_to_summary(row)
+
+    def list_summaries(
+        self,
+        *,
+        status: SagaStatus | None = None,
+        limit: int,
+        after: tuple[datetime, str] | None = None,
+    ) -> list[SagaSummary]:
+        """Return up to limit sagas ordered newest first with optional keyset and status filter."""
+        if not (1 <= limit <= 1000):
+            raise ValueError("limit must be between 1 and 1000 inclusive")
+
+        stmt = select(SagaModel)
+        if status is not None:
+            stmt = stmt.where(SagaModel.status == status.value)
+        if after is not None:
+            # keyset pagination: rows strictly before the cursor position
+            stmt = stmt.where(
+                tuple_(SagaModel.created_at, SagaModel.saga_id) < tuple_(after[0], after[1])
+            )
+        stmt = stmt.order_by(SagaModel.created_at.desc(), SagaModel.saga_id.desc()).limit(limit)
+
+        with self._session_factory() as session:
+            rows = session.execute(stmt).scalars().all()
+            return [_row_to_summary(r) for r in rows]
 
     # -- OutboxStore --
 
