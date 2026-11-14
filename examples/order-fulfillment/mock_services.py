@@ -322,6 +322,11 @@ class MockRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"status": "ok", "fail": sorted(list(self.state.fail_shops))})
 
 
+class _MockHTTPServer(ThreadingHTTPServer):
+    # Default backlog of 5 drops simultaneous connects under concurrency
+    request_queue_size = 128
+
+
 def create_server(host: str, port: int, fail_shops: Iterable[str] = ()) -> ThreadingHTTPServer:
     """Create and return a ThreadingHTTPServer configured with mock shop services."""
     state = MockState(fail_shops)
@@ -330,7 +335,7 @@ def create_server(host: str, port: int, fail_shops: Iterable[str] = ()) -> Threa
         pass
 
     BoundHandler.state = state
-    server = ThreadingHTTPServer((host, port), BoundHandler)
+    server = _MockHTTPServer((host, port), BoundHandler)
     server.state = state  # type: ignore[attr-defined]
     return server
 
