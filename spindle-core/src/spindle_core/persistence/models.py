@@ -1,9 +1,21 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, func, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from .constants import NAME_PATTERN
 from .database import Base
 
 
@@ -14,8 +26,12 @@ class SagaModel(Base):
     state: Mapped[dict] = mapped_column(JSONB, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
     template_name: Mapped[str | None] = mapped_column(String, nullable=True)
     template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -40,4 +56,45 @@ class OutboxModel(Base):
 
     __table_args__ = (
         Index("ix_outbox_unpublished", "id", postgresql_where=text("published = false")),
+    )
+
+
+class ServiceModel(Base):
+    __tablename__ = "services"
+
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    definition: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(f"name ~ '{NAME_PATTERN}'", name="ck_services_name_format"),
+    )
+
+
+class TemplateModel(Base):
+    __tablename__ = "templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    definition: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    format_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(f"name ~ '{NAME_PATTERN}'", name="ck_templates_name_format"),
+        CheckConstraint("version >= 1", name="ck_templates_version_min"),
+        UniqueConstraint("name", "version", name="uq_templates_name_version"),
+        Index("ix_templates_name_content_hash", "name", "content_hash"),
     )
