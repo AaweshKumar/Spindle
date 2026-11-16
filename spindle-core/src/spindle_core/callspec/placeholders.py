@@ -16,11 +16,12 @@ NAMESPACES = frozenset({"input", "steps", "saga", "secret"})
 MAX_BODY_BYTES = 262_144
 MAX_URL_CHARS = 2_048
 MAX_HEADER_VALUE_CHARS = 4_096
+MAX_DEPTH = 32
 
-SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-SECRET_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
-HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
-URL_ABS_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*://)([^/?#]*)(.*)$", re.DOTALL)
+SEGMENT_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
+SECRET_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*\Z")
+HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+\Z")
+URL_ABS_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*://)([^/?#]*)(.*)\Z", re.DOTALL)
 
 
 class PlaceholderError(ValueError):
@@ -82,7 +83,7 @@ def _parse_reference(raw: str) -> tuple[str, tuple[str, ...]]:
         raise PlaceholderSyntaxError(f"empty segment in placeholder: '{raw}'")
 
     for part in parts:
-        if not SEGMENT_RE.match(part):
+        if not SEGMENT_RE.fullmatch(part):
             raise PlaceholderSyntaxError(f"invalid characters in segment: '{part}'")
 
     ns = parts[0]
@@ -103,7 +104,7 @@ def _parse_reference(raw: str) -> tuple[str, tuple[str, ...]]:
         if len(parts) != 2:
             raise PlaceholderSyntaxError("secret placeholder must have exactly one segment")
         name = parts[1]
-        if not SECRET_NAME_RE.match(name):
+        if not SECRET_NAME_RE.fullmatch(name):
             raise PlaceholderSyntaxError(
                 f"invalid secret name '{name}', must match ^[A-Z][A-Z0-9_]*$"
             )
@@ -150,27 +151,33 @@ def find_placeholders(text: str) -> list[Placeholder]:
     return placeholders
 
 
-def iter_placeholders(value: Any, where: str = "$") -> Iterator[tuple[str, Placeholder]]:
+def iter_placeholders(
+    value: Any, where: str = "$", *, _depth: int = 0
+) -> Iterator[tuple[str, Placeholder]]:
     """Walk dict values, list items, and strings, yielding location and placeholders."""
     if isinstance(value, str):
         for ph in find_placeholders(value):
             yield where, ph
     elif isinstance(value, dict):
+        if _depth >= MAX_DEPTH:
+            raise RenderLimitError("nesting too deep")
         for k in value:
             if isinstance(k, str) and "{{" in k:
                 raise PlaceholderSyntaxError("placeholders in object keys are not supported")
         for k, v in value.items():
-            yield from iter_placeholders(v, f"{where}.{k}")
+            yield from iter_placeholders(v, f"{where}.{k}", _depth=_depth + 1)
     elif isinstance(value, (list, tuple)):
+        if _depth >= MAX_DEPTH:
+            raise RenderLimitError("nesting too deep")
         for i, item in enumerate(value):
-            yield from iter_placeholders(item, f"{where}[{i}]")
+            yield from iter_placeholders(item, f"{where}[{i}]", _depth=_depth + 1)
 
 
 def check_references(value: Any, *, allow_secrets: bool, where: str = "$") -> list[str]:
     """Inspect all placeholders in a data structure and collect human-readable issues."""
     problems: list[str] = []
 
-    def _walk(val: Any, loc: str) -> None:
+    def _walk(val: Any, loc: str, depth: int) -> None:
         if isinstance(val, str):
             try:
                 phs = find_placeholders(val)
@@ -181,16 +188,22 @@ def check_references(value: Any, *, allow_secrets: bool, where: str = "$") -> li
                 if not allow_secrets and ph.namespace == "secret":
                     problems.append(f"{loc}: secret placeholders are only allowed in header values")
         elif isinstance(val, dict):
+            if depth >= MAX_DEPTH:
+                problems.append(f"{loc}: too deeply nested (maximum depth is {MAX_DEPTH})")
+                return
             for k in val:
                 if isinstance(k, str) and "{{" in k:
                     problems.append(f"{loc}: placeholders in object keys are not supported")
             for k, v in val.items():
-                _walk(v, f"{loc}.{k}")
+                _walk(v, f"{loc}.{k}", depth + 1)
         elif isinstance(val, (list, tuple)):
+            if depth >= MAX_DEPTH:
+                problems.append(f"{loc}: too deeply nested (maximum depth is {MAX_DEPTH})")
+                return
             for i, item in enumerate(val):
-                _walk(item, f"{loc}[{i}]")
+                _walk(item, f"{loc}[{i}]", depth + 1)
 
-    _walk(value, where)
+    _walk(value, where, 0)
     return problems
 
 
@@ -330,17 +343,26 @@ def _render_str(text: str, ctx: RenderContext, *, allow_secrets: bool = False) -
     return "".join(chunks)
 
 
-def render_value(value: Any, ctx: RenderContext, *, allow_secrets: bool = False) -> Any:
+def render_value(
+    value: Any, ctx: RenderContext, *, allow_secrets: bool = False, _depth: int = 0
+) -> Any:
     """Render placeholders across arbitrary nested JSON structures."""
     if isinstance(value, str):
         return _render_str(value, ctx, allow_secrets=allow_secrets)
     if isinstance(value, dict):
+        if _depth >= MAX_DEPTH:
+            raise RenderLimitError("nesting too deep")
         for k in value:
             if isinstance(k, str) and "{{" in k:
                 raise PlaceholderSyntaxError("placeholders in object keys are not supported")
-        return {k: render_value(v, ctx, allow_secrets=allow_secrets) for k, v in value.items()}
+        return {
+            k: render_value(v, ctx, allow_secrets=allow_secrets, _depth=_depth + 1)
+            for k, v in value.items()
+        }
     if isinstance(value, (list, tuple)):
-        return [render_value(v, ctx, allow_secrets=allow_secrets) for v in value]
+        if _depth >= MAX_DEPTH:
+            raise RenderLimitError("nesting too deep")
+        return [render_value(v, ctx, allow_secrets=allow_secrets, _depth=_depth + 1) for v in value]
     if isinstance(value, (bool, int, float)) or value is None:
         return value
     raise UnsupportedValueError(f"unsupported value type: {type(value).__name__}")
@@ -382,6 +404,17 @@ def render_url(template: str, ctx: RenderContext) -> str:
     chunks.append(remainder[last_pos:])
     rendered_rem = "".join(chunks)
 
+    # Reject dot segments in the path portion prior to query or fragment.
+    path_end = len(rendered_rem)
+    for delim in ("?", "#"):
+        pos = rendered_rem.find(delim)
+        if pos != -1 and pos < path_end:
+            path_end = pos
+    path_part = rendered_rem[:path_end]
+    for segment in path_part.split("/"):
+        if urllib.parse.unquote(segment).lower() in {".", ".."}:
+            raise UnsafeValueError("rendered URL path contains a dot segment")
+
     rendered_url = f"{scheme}{authority}{rendered_rem}"
     if len(rendered_url) > MAX_URL_CHARS:
         raise RenderLimitError(f"rendered URL exceeds MAX_URL_CHARS ({MAX_URL_CHARS})")
@@ -396,8 +429,12 @@ def render_headers(
     used_secrets: set[str] = set()
 
     for name, template in headers.items():
-        if "{{" in name or not HEADER_NAME_RE.match(name):
+        if not isinstance(name, str) or "{{" in name or not HEADER_NAME_RE.fullmatch(name):
             raise PlaceholderSyntaxError(f"invalid header name '{name}'")
+        if not isinstance(template, str):
+            raise UnsupportedValueError(
+                f"header '{name}' value must be a string, got {type(template).__name__}"
+            )
 
         phs = find_placeholders(template)
         for ph in phs:
@@ -452,3 +489,28 @@ def redact_text(text: str, secret_values: Iterable[str]) -> str:
     for sec in sorted_secrets:
         text = text.replace(sec, "***")
     return text
+
+
+def redact_value(value: Any, secret_values: Iterable[str], *, _depth: int = 0) -> Any:
+    """Return a deep copy of value with secrets redacted from string keys and values."""
+    secrets = tuple(secret_values) if _depth == 0 else secret_values
+    if isinstance(value, str):
+        return redact_text(value, secrets)
+    if isinstance(value, dict):
+        if _depth >= MAX_DEPTH:
+            raise RenderLimitError("nesting too deep")
+        return {
+            (redact_text(k, secrets) if isinstance(k, str) else k): redact_value(
+                v, secrets, _depth=_depth + 1
+            )
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        if _depth >= MAX_DEPTH:
+            raise RenderLimitError("nesting too deep")
+        return [redact_value(item, secrets, _depth=_depth + 1) for item in value]
+    if isinstance(value, tuple):
+        if _depth >= MAX_DEPTH:
+            raise RenderLimitError("nesting too deep")
+        return tuple(redact_value(item, secrets, _depth=_depth + 1) for item in value)
+    return value

@@ -17,7 +17,7 @@ METADATA_IPS = frozenset({
     ipaddress.ip_address("fd00:ec2::254"),
 })
 METADATA_HOSTS = frozenset({"metadata.google.internal", "metadata"})
-NUMERIC_HOST_RE = re.compile(r"^(0x[0-9a-fA-F]+|[0-9]+)(\.(0x[0-9a-fA-F]+|[0-9]+))*$")
+NUMERIC_HOST_RE = re.compile(r"^(0x[0-9a-fA-F]+|[0-9]+)(\.(0x[0-9a-fA-F]+|[0-9]+))*\Z")
 
 
 def parse_allowed_hosts(value: str | None) -> frozenset[str] | None:
@@ -113,6 +113,8 @@ def check_url_template(url: Any, *, allowed_hosts: frozenset[str] | None = None)
             problems.append("URL must include a host")
         else:
             host = parsed.hostname.lower().rstrip(".")
+            if not host.isascii():
+                problems.append("host must be ASCII (use punycode for international names)")
 
     # Rule 8: IP address security checks
     is_ip = False
@@ -130,7 +132,7 @@ def check_url_template(url: Any, *, allowed_hosts: frozenset[str] | None = None)
 
     # Rule 9: Ambiguous numeric host representations
     if host and not is_ip:
-        if NUMERIC_HOST_RE.match(host):
+        if NUMERIC_HOST_RE.fullmatch(host):
             problems.append(f"ambiguous numeric host: '{host}'")
 
     # Rule 10: Metadata hostnames

@@ -89,23 +89,28 @@ def is_retryable_status(code: int) -> bool:
     return code in RETRYABLE_STATUS
 
 
+RETRYABLE_EXCEPTIONS = (
+    TimeoutError,
+    ConnectionError,
+    http.client.RemoteDisconnected,
+    http.client.IncompleteRead,
+    socket.gaierror,
+)
+
+
 def is_retryable_exception(exc: BaseException) -> bool:
     """Return True if an exception represents a transient network or connection failure."""
-    if isinstance(exc, urllib.error.HTTPError):
-        return False
-    if isinstance(
-        exc,
-        (
-            TimeoutError,
-            ConnectionError,
-            http.client.RemoteDisconnected,
-            http.client.IncompleteRead,
-            socket.gaierror,
-        ),
-    ):
-        return True
-    if isinstance(exc, urllib.error.URLError):
-        if isinstance(exc.reason, BaseException):
-            return is_retryable_exception(exc.reason)
-        return False
-    return False
+    curr: BaseException | Any = exc
+    hops = 0
+    while True:
+        if isinstance(curr, urllib.error.HTTPError):
+            return False
+        if isinstance(curr, RETRYABLE_EXCEPTIONS):
+            return True
+        if isinstance(curr, urllib.error.URLError) and isinstance(curr.reason, BaseException):
+            hops += 1
+            if hops > 5:
+                return False
+            curr = curr.reason
+        else:
+            return False
