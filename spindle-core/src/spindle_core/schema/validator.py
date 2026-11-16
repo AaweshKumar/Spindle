@@ -22,10 +22,14 @@ import pydantic as _pydantic
 import yaml
 
 from spindle_core.callspec.placeholders import (
+    SECRET_NAME_RE,
     iter_placeholders,
     PlaceholderSyntaxError,
 )
-from spindle_core.callspec.retry import RetryPolicy as CallspecRetryPolicy
+from spindle_core.callspec.retry import (
+    MAX_STEP_BUDGET_SECONDS,
+    RetryPolicy as CallspecRetryPolicy,
+)
 from spindle_core.callspec.url_rules import check_url_template
 from spindle_core.schema.constants import ALLOWED_TEMPLATE_ROOTS, HTTP_METHODS
 from spindle_core.schema.errors import FieldError, ValidationError
@@ -40,29 +44,29 @@ from spindle_core.schema.models import (
 
 
 def _pydantic_loc_to_path(loc: tuple[int | str, ...]) -> str:
-    """Convert a Pydantic error loc tuple into a bracket-notation path string."""
-    if not loc:
-        return ""
-    parts: list[str] = []
+    """('steps', 2, 'compensation') -> 'steps[2].compensation'."""
+    path = ""
     for item in loc:
         if isinstance(item, int):
-            parts.append(f"[{item}]")
+            path += f"[{item}]"
+        elif path:
+            path += f".{item}"
         else:
-            if parts and not parts[-1].endswith("]"):
-                parts.append(f".{item}")
-            else:
-                parts.append(str(item))
-    return "".join(parts)
+            path = str(item)
+    return path
 
 
 def _convert_pydantic_error(exc: _pydantic.ValidationError) -> list[FieldError]:
     """Convert a pydantic.ValidationError into a list of FieldErrors."""
     errors: list[FieldError] = []
+    pattern = f"{SECRET_NAME_RE.pattern.removesuffix(r'\Z').removesuffix('$')}$"
     for err in exc.errors():
         path = _pydantic_loc_to_path(err["loc"])
         msg = err["msg"]
         if msg.startswith("Value error, "):
             msg = msg[len("Value error, ") :]
+        if path.endswith("secret_ref") and err.get("type") != "missing":
+            msg = f"secret_ref must match {pattern}"
         errors.append(FieldError(path=path, message=msg))
     return errors
 
@@ -360,10 +364,14 @@ def validate_saga(data: Any, *, known_services: Collection[str]) -> SagaDefiniti
             )
         elif fwd_retry is not None:
             if not fwd_retry.fits_budget(step.timeout_s):
+                dur = fwd_retry.worst_case_seconds(step.timeout_s)
                 errors.append(
                     FieldError(
                         path=f"{step_path}.timeout_s",
-                        message=f"worst-case execution duration ({fwd_retry.worst_case_seconds(step.timeout_s):.1f}s) exceeds maximum step budget of 120.0s",
+                        message=(
+                            f"worst-case execution duration ({dur:.1f}s) "
+                            f"exceeds maximum step budget of {MAX_STEP_BUDGET_SECONDS:.1f}s"
+                        ),
                     )
                 )
 
@@ -419,10 +427,14 @@ def validate_saga(data: Any, *, known_services: Collection[str]) -> SagaDefiniti
                     retry_path = (
                         f"{comp_path}.retry" if comp.retry is not None else f"{comp_path}.timeout_s"
                     )
+                    dur = comp_retry.worst_case_seconds(comp_timeout)
                     errors.append(
                         FieldError(
                             path=retry_path,
-                            message=f"worst-case compensation duration ({comp_retry.worst_case_seconds(comp_timeout):.1f}s) exceeds maximum step budget of 120.0s",
+                            message=(
+                                f"worst-case compensation duration ({dur:.1f}s) "
+                                f"exceeds maximum step budget of {MAX_STEP_BUDGET_SECONDS:.1f}s"
+                            ),
                         )
                     )
 
