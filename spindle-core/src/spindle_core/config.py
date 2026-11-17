@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     # -- Runtime environment -------------------------------------------------
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
 
+    # -- Services authoring --------------------------------------------------
+    # Comma-separated list of allowed hostnames/IPs for registered services.
+    # None (the default) allows any host permitted by callspec security rules.
+    SERVICE_ALLOWED_HOSTS: str | None = None
+
     @field_validator("JWT_SECRET")
     @classmethod
     def _jwt_secret_min_length(cls, v: SecretStr) -> SecretStr:

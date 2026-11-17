@@ -17,13 +17,22 @@ For local development with auto-reload:
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
+from spindle_core.api.errors import (
+    request_validation_error_handler,
+    schema_validation_error_handler,
+)
 from spindle_core.api.health import router as health_router
 from spindle_core.api.lifespan import make_lifespan
 from spindle_core.api.sagas import router as sagas_router
+from spindle_core.api.services import router as services_router
+from spindle_core.api.validation import router as validation_router
+from spindle_core.api.workflows import router as workflows_router
 from spindle_core.auth.router import router as auth_router
 from spindle_core.config import Settings, get_settings
+from spindle_core.schema.errors import ValidationError
 from spindle_core.templates.router import router as templates_router
 
 
@@ -58,6 +67,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # This is the single source of truth for configuration across all layers.
     app.dependency_overrides[get_settings] = lambda: settings
 
+    # Exception handlers for request validation and schema errors
+    app.add_exception_handler(RequestValidationError, request_validation_error_handler)
+    app.add_exception_handler(ValidationError, schema_validation_error_handler)
+
     # CORS is the only middleware added at bootstrap.
     # Origins come exclusively from Settings, so the default (empty list)
     # denies all cross-origin requests.
@@ -75,6 +88,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(sagas_router)
     # Templates router
     app.include_router(templates_router)
+    # Services router
+    app.include_router(services_router)
+    # Workflows router
+    app.include_router(workflows_router)
+    # Validation router
+    app.include_router(validation_router)
     # Health router (unauthenticated)
     app.include_router(health_router)
 

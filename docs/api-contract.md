@@ -72,6 +72,141 @@ Responses:
 
 - `200` Successful Response - array of [TemplateResponse](#templateresponse)
 
+## PUT /services/{name}
+
+Auth: bearer token required.
+
+| parameter | in | required | type | notes |
+|---|---|---|---|---|
+| `name` | path | yes | string | maxLength: `64`; pattern: `"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"` |
+
+Request body (application/json): object
+
+Responses:
+
+- `200` Successful Response - [ServiceResponse](#serviceresponse)
+- `422` Validation Error - [HTTPValidationError](#httpvalidationerror)
+
+## GET /services/{name}
+
+Auth: bearer token required.
+
+| parameter | in | required | type | notes |
+|---|---|---|---|---|
+| `name` | path | yes | string | maxLength: `64`; pattern: `"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"` |
+
+Responses:
+
+- `200` Successful Response - [ServiceResponse](#serviceresponse)
+- `422` Validation Error - [HTTPValidationError](#httpvalidationerror)
+
+## DELETE /services/{name}
+
+Auth: bearer token required.
+
+| parameter | in | required | type | notes |
+|---|---|---|---|---|
+| `name` | path | yes | string | maxLength: `64`; pattern: `"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"` |
+
+Responses:
+
+- `204` Successful Response
+- `422` Validation Error - [HTTPValidationError](#httpvalidationerror)
+
+## GET /services
+
+Auth: bearer token required.
+
+Responses:
+
+- `200` Successful Response - array of [ServiceResponse](#serviceresponse)
+
+## POST /workflows/{name}/versions
+
+Auth: bearer token required.
+
+| parameter | in | required | type | notes |
+|---|---|---|---|---|
+| `name` | path | yes | string | maxLength: `64`; pattern: `"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"` |
+| `base_version` | query | no | integer or null | min: `0` |
+
+Request body (application/json): object
+
+Responses:
+
+- `200` Successful Response - [WorkflowResponse](#workflowresponse)
+- `422` Validation Error - [HTTPValidationError](#httpvalidationerror)
+
+## GET /workflows/{name}/versions
+
+Auth: bearer token required.
+
+| parameter | in | required | type | notes |
+|---|---|---|---|---|
+| `name` | path | yes | string | maxLength: `64`; pattern: `"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"` |
+
+Responses:
+
+- `200` Successful Response - array of [WorkflowResponse](#workflowresponse)
+- `422` Validation Error - [HTTPValidationError](#httpvalidationerror)
+
+## GET /workflows
+
+Auth: bearer token required.
+
+Responses:
+
+- `200` Successful Response - array of [WorkflowResponse](#workflowresponse)
+
+## GET /workflows/{name}
+
+Auth: bearer token required.
+
+| parameter | in | required | type | notes |
+|---|---|---|---|---|
+| `name` | path | yes | string | maxLength: `64`; pattern: `"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"` |
+
+Responses:
+
+- `200` Successful Response - [WorkflowResponse](#workflowresponse)
+- `422` Validation Error - [HTTPValidationError](#httpvalidationerror)
+
+## GET /workflows/{name}/versions/{version}
+
+Auth: bearer token required.
+
+| parameter | in | required | type | notes |
+|---|---|---|---|---|
+| `name` | path | yes | string | maxLength: `64`; pattern: `"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"` |
+| `version` | path | yes | integer | min: `1` |
+
+Responses:
+
+- `200` Successful Response - [WorkflowResponse](#workflowresponse)
+- `422` Validation Error - [HTTPValidationError](#httpvalidationerror)
+
+## POST /validate/service
+
+Auth: bearer token required.
+
+Request body (application/json): object
+
+Responses:
+
+- `200` Successful Response - [ValidationResult](#validationresult)
+- `422` Validation Error - [HTTPValidationError](#httpvalidationerror)
+
+## POST /validate/workflow
+
+Auth: bearer token required.
+
+Request body (application/json): object
+
+Responses:
+
+- `200` Successful Response - [ValidationResult](#validationresult)
+- `422` Validation Error - [HTTPValidationError](#httpvalidationerror)
+
 ## GET /health
 
 Auth: none.
@@ -131,6 +266,16 @@ Response for POST /sagas.
 
 Values: `RUNNING`, `COMPENSATING`, `COMPLETED`, `COMPENSATED`, `FAILED`
 
+### ServiceResponse
+
+| field | type | required | notes |
+|---|---|---|---|
+| `name` | string | yes |  |
+| `definition` | object | yes |  |
+| `revision` | integer | yes |  |
+| `created_at` | string (date-time) | yes |  |
+| `updated_at` | string (date-time) | yes |  |
+
 ### StartSagaRequest
 
 Body for POST /sagas.  ``extra="forbid"`` ensures that passing an inline ``steps`` key (deferred feature) results in a 422 rather than silently ignoring it.
@@ -181,6 +326,25 @@ JSON body returned by POST /auth/token.  ``expires_in`` is seconds, matching RFC
 | `token_type` | string | no | default: `"bearer"` |
 | `expires_in` | integer | yes |  |
 
+### ValidationResult
+
+| field | type | required | notes |
+|---|---|---|---|
+| `valid` | boolean | yes |  |
+| `errors` | array of object | yes |  |
+
+### WorkflowResponse
+
+| field | type | required | notes |
+|---|---|---|---|
+| `name` | string | yes |  |
+| `version` | integer | yes |  |
+| `definition` | object | yes |  |
+| `content_hash` | string | yes |  |
+| `format_version` | integer | yes |  |
+| `created_at` | string (date-time) | yes |  |
+| `created_by` | string or null | yes |  |
+
 ## Behaviour notes
 
 ### Authentication
@@ -229,6 +393,30 @@ JSON body returned by POST /auth/token.  ``expires_in`` is seconds, matching RFC
 
 ### Not available (do not build UI for these)
 - Saga failure reason text, cancel or retry actions, a workers panel, total counts, search, push notifications.
+
+### Authoring API: Services (/services)
+- Services define registered backend services with `name`, `base_url`, `health`, and `auth`.
+- Services are mutable: a changed base_url affects in-flight sagas.
+- `SERVICE_ALLOWED_HOSTS` is unset by default (permissive); setting it restricts registrable hosts to the list.
+- `PUT /services/{name}`: body name must match path name. Returns 201 when created, 200 on update or identical content.
+- `DELETE /services/{name}`: delete guard checks the LATEST version of each workflow only. If any workflow references the service in its latest version, returns 409 with `{"detail": "...", "referenced_by": [first 50 workflow names]}`. Otherwise returns 204. Returns 404 if the service does not exist.
+
+### Authoring API: Workflows (/workflows)
+- Workflows are versioned saga templates published via `POST /workflows/{name}/versions`.
+- Workflow names use ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$, wider than the legacy POST /sagas pattern ^[a-z0-9][a-z0-9_-]*$ (a workflow named "Foo" cannot be referenced by the legacy start path; no change to that path).
+- Workflows are stored and validated but not yet executable.
+- Publishing with optional `base_version=N` enforces optimistic concurrency: returns 201 if created, 200 if identical content exists, 409 on version conflict. Definition text is never leaked in error messages.
+- `GET /workflows` lists the latest version of each workflow (unpaginated).
+
+### Authoring API: Validation (/validate)
+- `POST /validate/service` and `POST /validate/workflow` perform dry-run validation with no side effects and no DB writes.
+- Returns 200 `{"valid": true, "errors": []}` on success, or `200 {"valid": false, "errors": [...]}` on validation failure.
+- Malformed envelope (body not an object, invalid JSON) returns 422.
+
+### Authoring API: Error Handling
+- The 422 shape on new routes differs from FastAPI's default and never echoes input. Errors are returned as `{"detail": "validation failed", "errors": [{"path": "...", "message": "..."}]}` built solely from `loc` and `msg`.
+- Every new authoring route requires bearer token authentication (`Depends(get_current_user)`) and returns 401 when unauthenticated.
+- Request bodies with `Content-Length > 262144` bytes are rejected with 413.
 
 # Examples
 

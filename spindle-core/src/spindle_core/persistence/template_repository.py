@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import json
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select, text
@@ -192,3 +193,27 @@ class TemplateRepository:
                     raise VersionConflict(
                         f"template '{name}' version {target_version} conflict"
                     ) from exc
+
+    def names_referencing_service(self, service_name: str) -> list[str]:
+        """Return names of workflows whose latest version references service_name."""
+        if not NAME_RE.fullmatch(service_name):
+            raise InvalidNameError("invalid service name")
+
+        target = json.dumps([{"service": service_name}])
+        stmt = text(
+            """
+            WITH latest_templates AS (
+                SELECT DISTINCT ON (name) name, definition
+                FROM templates
+                ORDER BY name ASC, version DESC
+            )
+            SELECT name
+            FROM latest_templates
+            WHERE definition->'steps' @> CAST(:target AS jsonb)
+            ORDER BY name ASC;
+            """
+        )
+        with self._session_factory() as session:
+            rows = session.execute(stmt, {"target": target}).scalars().all()
+            return list(rows)
+

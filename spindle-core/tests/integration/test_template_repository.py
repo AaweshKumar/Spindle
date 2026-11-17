@@ -35,72 +35,6 @@ from spindle_core.schema.models import SagaDefinition
 pytestmark = pytest.mark.e2e
 
 
-def _get_pg_env() -> dict[str, str]:
-    return {
-        "user": os.environ.get("POSTGRES_USER", "spindle"),
-        "password": os.environ.get("POSTGRES_PASSWORD", "spindle-dev-only"),
-        "host": os.environ.get("POSTGRES_HOST", "127.0.0.1"),
-        "port": os.environ.get("POSTGRES_PORT", "5433"),
-        "maint_db": os.environ.get("POSTGRES_DB", "spindle"),
-    }
-
-
-@pytest.fixture(scope="module")
-def scratch_db():
-    env = _get_pg_env()
-    maint_url = (
-        f"postgresql://{env['user']}:{env['password']}@{env['host']}:{env['port']}/{env['maint_db']}"
-    )
-
-    try:
-        conn = psycopg2.connect(maint_url, connect_timeout=3)
-        conn.autocommit = True
-    except Exception as exc:
-        pytest.skip(f"Postgres server not reachable on {env['host']}:{env['port']}: {exc}")
-
-    scratch_name = f"scratch_tmpl_{uuid.uuid4().hex[:8]}"
-    cur = conn.cursor()
-    cur.execute(f"CREATE DATABASE {scratch_name};")
-    conn.close()
-
-    scratch_sa_url = (
-        f"postgresql+psycopg2://{env['user']}:{env['password']}@{env['host']}:{env['port']}/{scratch_name}"
-    )
-    old_db_url = os.environ.get("DATABASE_URL")
-    os.environ["DATABASE_URL"] = scratch_sa_url
-
-    engine = create_engine(scratch_sa_url, pool_pre_ping=True)
-    factory = sessionmaker(bind=engine)
-
-    # Run migrations to head
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("script_location", "migrations")
-    cfg.config_file_name = None
-    command.upgrade(cfg, "head")
-
-    try:
-        yield factory
-    finally:
-        engine.dispose()
-        if old_db_url is not None:
-            os.environ["DATABASE_URL"] = old_db_url
-        else:
-            os.environ.pop("DATABASE_URL", None)
-
-        try:
-            cleanup_conn = psycopg2.connect(maint_url, connect_timeout=3)
-            cleanup_conn.autocommit = True
-            c_cur = cleanup_conn.cursor()
-            c_cur.execute(
-                f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                f"WHERE datname = '{scratch_name}' AND pid <> pg_backend_pid();"
-            )
-            c_cur.execute(f"DROP DATABASE IF EXISTS {scratch_name};")
-            cleanup_conn.close()
-        except Exception:
-            pass
-
-
 def _make_saga(name: str, path: str = "/orders") -> SagaDefinition:
     return SagaDefinition.model_validate(
         {
@@ -376,3 +310,47 @@ def test_template_invalid_name_and_no_definition_leak_in_errors(scratch_db) -> N
 
     err_text = str(exc_info.value)
     assert secret_payload_marker not in err_text
+
+
+def test_names_referencing_service(scratch_db) -> None:
+    repo = TemplateRepository(scratch_db)
+
+    # Invalid service name rejected
+    with pytest.raises(InvalidNameError):
+        repo.names_referencing_service("bad service name!")
+
+    def make_saga_with_service(name: str, service: str) -> SagaDefinition:
+        return SagaDefinition.model_validate(
+            {
+                "name": name,
+                "steps": [
+                    {
+                        "name": "step1",
+                        "service": service,
+                        "action": {"method": "POST", "path": "/run"},
+                        "timeout_s": 10.0,
+                        "compensation": {"method": "POST", "path": "/undo"},
+                    }
+                ],
+            }
+        )
+
+    t1_name = f"wf_a_{uuid.uuid4().hex[:6]}"
+    t2_name = f"wf_b_{uuid.uuid4().hex[:6]}"
+
+    # Publish t1 with svc_alpha
+    repo.publish(make_saga_with_service(t1_name, "svc_alpha"))
+    # Publish t2 with svc_beta
+    repo.publish(make_saga_with_service(t2_name, "svc_beta"))
+
+    assert repo.names_referencing_service("svc_alpha") == [t1_name]
+    assert repo.names_referencing_service("svc_beta") == [t2_name]
+    assert repo.names_referencing_service("svc_gamma") == []
+
+    # Update t1 to v2 referencing svc_beta instead of svc_alpha
+    repo.publish(make_saga_with_service(t1_name, "svc_beta"), base_version=1)
+
+    # Latest version only: t1 no longer references svc_alpha
+    assert repo.names_referencing_service("svc_alpha") == []
+    assert sorted(repo.names_referencing_service("svc_beta")) == sorted([t1_name, t2_name])
+

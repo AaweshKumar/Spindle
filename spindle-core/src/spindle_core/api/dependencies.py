@@ -19,8 +19,12 @@ from pathlib import Path
 import yaml
 from fastapi import Depends, Request
 
+from spindle_core.callspec.url_rules import parse_allowed_hosts
+from spindle_core.config import Settings, get_settings
 from spindle_core.orchestrator.runner import Runner
 from spindle_core.persistence.repositories import PgSagaRepository
+from spindle_core.persistence.service_repository import ServiceRepository
+from spindle_core.persistence.template_repository import TemplateRepository
 from spindle_core.streams.producer import RedisCommandBus
 from spindle_core.tapestry.loader import TapestryStore
 from spindle_core.templates.loader import TemplateStore
@@ -113,3 +117,21 @@ def get_runner(
 def get_template_store(request: Request) -> TemplateStore:
     """Return the shared TemplateStore loaded at startup."""
     return request.app.state.templates
+
+
+def get_service_repository(request: Request) -> ServiceRepository:
+    """Return a ServiceRepository bound to the app's session factory."""
+    return ServiceRepository(request.app.state.session_factory)
+
+
+def get_template_repository(request: Request) -> TemplateRepository:
+    """Return a TemplateRepository bound to the app's session factory."""
+    return TemplateRepository(request.app.state.session_factory)
+
+
+def get_service_allowed_hosts(
+    settings: Settings = Depends(get_settings),
+) -> frozenset[str] | None:
+    """Return parsed set of allowed hosts for service registration."""
+    return parse_allowed_hosts(settings.SERVICE_ALLOWED_HOSTS)
+
