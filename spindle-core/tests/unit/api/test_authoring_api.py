@@ -42,6 +42,7 @@ def _make_settings(**overrides: Any) -> Settings:
         ("GET", "/services/test"),
         ("DELETE", "/services/test"),
         ("POST", "/workflows/test/versions"),
+        ("POST", "/workflows/test/runs"),
         ("GET", "/workflows"),
         ("GET", "/workflows/test"),
         ("GET", "/workflows/test/versions"),
@@ -293,5 +294,66 @@ def test_no_leak_on_validate_workflow_route() -> None:
     assert "input" not in res_inv.text
     assert "ctx" not in res_inv.text
     assert "url" not in res_inv.text
+
+
+def test_no_leak_on_workflow_runs_route() -> None:
+    class DummyRepo:
+        def names(self) -> frozenset[str]:
+            return frozenset({"payment"})
+
+    app = create_app(_make_settings())
+    app.dependency_overrides[get_current_user] = lambda: User(username="admin")
+    app.dependency_overrides[get_service_repository] = lambda: DummyRepo()
+    app.dependency_overrides[get_template_repository] = lambda: DummyRepo()
+
+    client = TestClient(app, raise_server_exceptions=False)
+    token = "RUNS_PROBE_TOKEN_998877"
+
+    # Case 1: Token in wrong-typed version
+    body_typed = {"version": "not-an-int-" + token, "input": {}}
+    res_typed = client.post("/workflows/test_workflow/runs", json=body_typed)
+    assert res_typed.status_code == 422
+    assert token not in res_typed.text
+    assert "input" not in res_typed.text
+    assert "ctx" not in res_typed.text
+    assert "url" not in res_typed.text
+
+    # Case 2: Token in invalid JSON body
+    res_inv = client.post(
+        "/workflows/test_workflow/runs",
+        content=b"invalid json {" + token.encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    assert res_inv.status_code == 422
+    assert token not in res_inv.text
+    assert "input" not in res_inv.text
+    assert "ctx" not in res_inv.text
+    assert "url" not in res_inv.text
+
+
+def test_get_endpoints_never_expose_input_or_snapshot() -> None:
+    # Verify no response models in sagas or workflows expose input or definition_snapshot
+    from spindle_core.api.sagas import SagaDetailResponse, SagaListResponse, SagaResponse
+    from spindle_core.api.workflows import WorkflowResponse
+
+    for model in (SagaResponse, SagaDetailResponse, SagaListResponse, WorkflowResponse):
+        fields = model.model_fields.keys()
+        assert "input" not in fields
+        assert "definition_snapshot" not in fields
+        assert "snapshot" not in fields
+
+
+def test_no_logger_calls_for_input_or_snapshot() -> None:
+    # Amendment 6: input and snapshot never appear in any log call
+    modules = [
+        Path(__file__).parents[3] / "src" / "spindle_core" / "api" / "workflows.py",
+        Path(__file__).parents[3] / "src" / "spindle_core" / "persistence" / "step_result_repository.py",
+        Path(__file__).parents[3] / "src" / "spindle_core" / "schema" / "inputs.py",
+    ]
+    for path in modules:
+        content = path.read_text(encoding="utf-8")
+        assert "logger." not in content, f"Unexpected logger call in {path.name}"
+        assert "logging." not in content, f"Unexpected logging call in {path.name}"
+
 
 

@@ -122,3 +122,63 @@ def test_fetch_unsent_has_no_for_update():
     assert "published = false" in sql.lower()
     assert "ORDER BY outbox.id" in sql
     assert "LIMIT" in sql.upper()
+
+
+def test_save_validation_source_and_snapshot():
+    mock_session_factory = MagicMock()
+    repo = PgSagaRepository(mock_session_factory)
+    state = SagaState("s1", SagaStatus.RUNNING, ())
+
+    # Invalid source
+    with pytest.raises(ValueError, match="invalid source"):
+        repo.save("s1", state, [], 0, source="unknown")
+
+    # Workflow without snapshot
+    with pytest.raises(ValueError, match="definition_snapshot is required when source='workflow'"):
+        repo.save("s1", state, [], 0, source="workflow", definition_snapshot=None)
+
+    # Template with snapshot
+    with pytest.raises(ValueError, match="definition_snapshot cannot be set when source='template'"):
+        repo.save("s1", state, [], 0, source="template", definition_snapshot={"steps": []})
+
+    # Non-zero expected_version with workflow metadata
+    with pytest.raises(ValueError, match="workflow metadata can only be set when creating a new saga"):
+        repo.save("s1", state, [], 1, source="workflow", definition_snapshot={"steps": []})
+
+    with pytest.raises(ValueError, match="workflow metadata can only be set when creating a new saga"):
+        repo.save("s1", state, [], 1, input_data={"foo": "bar"})
+
+
+def test_save_workflow_stores_fields_on_create():
+    mock_session = MagicMock()
+    mock_session.begin.return_value.__enter__ = MagicMock()
+    mock_session_factory = MagicMock()
+    mock_session_factory.return_value.__enter__.return_value = mock_session
+
+    repo = PgSagaRepository(mock_session_factory)
+    state = SagaState("s1", SagaStatus.RUNNING, ())
+
+    snapshot = {"name": "wf", "version": 1, "definition": {}}
+    input_payload = {"key": "value"}
+
+    repo.save(
+        "s1",
+        state,
+        [],
+        0,
+        template_name="wf",
+        template_version=1,
+        source="workflow",
+        definition_snapshot=snapshot,
+        input_data=input_payload,
+    )
+
+    added = mock_session.add.call_args[0][0]
+    assert isinstance(added, SagaModel)
+    assert added.saga_id == "s1"
+    assert added.template_name == "wf"
+    assert added.template_version == 1
+    assert added.source == "workflow"
+    assert added.definition_snapshot == snapshot
+    assert added.input == input_payload
+

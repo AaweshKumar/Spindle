@@ -305,3 +305,156 @@ def test_workflow_body_size_and_no_leak_in_422() -> None:
     assert "input" not in res_invalid_json.text
     assert "ctx" not in res_invalid_json.text
     assert "url" not in res_invalid_json.text
+
+
+def test_workflow_runs_preconditions_and_501() -> None:
+    svc_repo = FakeWorkflowServiceRepo({"payment"})
+    tmpl_repo = FakeWorkflowTemplateRepo()
+    app = _make_app(tmpl_repo, svc_repo)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    wf_body = {
+        "name": "order_flow",
+        "steps": [
+            {
+                "name": "s1",
+                "service": "payment",
+                "action": {
+                    "method": "POST",
+                    "path": "/charge/{{input.order.id}}",
+                    "body": {"amount": "{{input.amount}}"},
+                },
+                "timeout_s": 5.0,
+                "compensation": {"method": "POST", "path": "/refund/{{input.order.id}}"},
+            }
+        ],
+    }
+    client.post("/workflows/order_flow/versions", json=wf_body)
+
+    # 1. 404 unknown workflow
+    res_404_wf = client.post("/workflows/unknown_wf/runs", json={})
+    assert res_404_wf.status_code == 404
+
+    # 2. 404 unknown version
+    res_404_v = client.post("/workflows/order_flow/runs", json={"version": 99})
+    assert res_404_v.status_code == 404
+
+    # 3. 422 missing input (all missing paths in one response)
+    res_missing = client.post("/workflows/order_flow/runs", json={"input": {}})
+    assert res_missing.status_code == 422
+    err_paths = {e["path"] for e in res_missing.json()["errors"]}
+    assert "input.order.id" in err_paths
+    assert "input.amount" in err_paths
+    for e in res_missing.json()["errors"]:
+        assert e["message"] == "required input missing"
+
+    # 4. 422 non-object input
+    res_non_obj = client.post("/workflows/order_flow/runs", json={"input": "string_not_dict"})
+    assert res_non_obj.status_code == 422
+    assert any(e["path"] == "input" for e in res_non_obj.json()["errors"])
+
+    # 5. 422 extra body fields
+    res_extra = client.post(
+        "/workflows/order_flow/runs",
+        json={"version": 1, "input": {}, "extra_field": "forbidden"},
+    )
+    assert res_extra.status_code == 422
+    assert any(e["path"] == "extra_field" for e in res_extra.json()["errors"])
+
+    # 6. 422 oversize input
+    oversize_input = {"order": {"id": "x" * 70000}, "amount": 100}
+    res_oversize = client.post("/workflows/order_flow/runs", json={"input": oversize_input})
+    assert res_oversize.status_code == 422
+    assert any(e["message"] == "input too large" for e in res_oversize.json()["errors"])
+
+    # 7. 422 too deep input
+    deep_dict: dict = {"bottom": 1}
+    for _ in range(35):
+        deep_dict = {"nested": deep_dict}
+    deep_input = {"order": {"id": "1"}, "amount": 100, "meta": deep_dict}
+    res_deep = client.post("/workflows/order_flow/runs", json={"input": deep_input})
+    assert res_deep.status_code == 422
+    assert any(e["message"] == "nesting too deep" for e in res_deep.json()["errors"])
+
+    # 8. 409 for deleted service
+    svc_repo._names = frozenset()  # payment service deleted
+    res_deleted_svc = client.post(
+        "/workflows/order_flow/runs",
+        json={"input": {"order": {"id": "1"}, "amount": 100}},
+    )
+    assert res_deleted_svc.status_code == 409
+    body_409 = res_deleted_svc.json()
+    assert body_409["detail"] == "workflow references unregistered services"
+    assert body_409["services"] == ["payment"]
+
+    # 9. 501 on valid path
+    svc_repo._names = frozenset({"payment"})
+    res_501 = client.post(
+        "/workflows/order_flow/runs",
+        json={"input": {"order": {"id": "1"}, "amount": 100}},
+    )
+    assert res_501.status_code == 501
+    assert res_501.json() == {"detail": "workflow execution is not enabled yet"}
+
+
+def test_prepare_run_helper_builds_snapshot_and_stripped_input() -> None:
+    from spindle_core.api.workflows import prepare_run
+
+    record = TemplateRecord(
+        id=1,
+        name="my-flow",
+        version=3,
+        definition={"steps": [{"name": "s1"}]},
+        format_version=1,
+        content_hash="hash123",
+        created_at=datetime.now(timezone.utc),
+        created_by="tester",
+    )
+    input_data = {"user": "bob", "count": 42}
+
+    snapshot, copy_data = prepare_run(record, input_data)
+    assert snapshot == {
+        "name": "my-flow",
+        "version": 3,
+        "content_hash": "hash123",
+        "definition": {"steps": [{"name": "s1"}]},
+    }
+    assert copy_data == {"user": "bob", "count": 42}
+    assert copy_data is not input_data
+
+    # Nested input key preservation (no envelope stripping)
+    nested_input = {"input": {"input": 1}}
+    _, copy_nested = prepare_run(record, nested_input)
+    assert copy_nested == {"input": {"input": 1}}
+
+    # None input
+    _, copy_none = prepare_run(record, None)
+    assert copy_none is None
+
+
+def test_workflow_runs_validation_reraised_when_no_unregistered_services() -> None:
+    # If definition fails validate_saga for reasons other than missing service, re-raise as 422
+    svc_repo = FakeWorkflowServiceRepo({"payment"})
+    tmpl_repo = FakeWorkflowTemplateRepo()
+    app = _make_app(tmpl_repo, svc_repo)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    # Corrupt definition with empty steps (fails validate_saga, but unregistered service set is empty)
+    now = datetime.now(timezone.utc)
+    corrupt_rec = TemplateRecord(
+        id=99,
+        name="corrupt_wf",
+        version=1,
+        definition={"name": "corrupt_wf", "steps": []},
+        format_version=1,
+        content_hash="h1",
+        created_at=now,
+        created_by="tester",
+    )
+    tmpl_repo.templates["corrupt_wf"] = [corrupt_rec]
+
+    res = client.post("/workflows/corrupt_wf/runs", json={"input": {}})
+    assert res.status_code == 422
+    assert res.json()["detail"] == "validation failed"
+    assert any(e["path"] == "steps" for e in res.json()["errors"])
+

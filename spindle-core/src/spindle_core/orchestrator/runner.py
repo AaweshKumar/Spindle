@@ -23,12 +23,34 @@ class Runner:
         self._repo = repo
         self._max_attempts = max_attempts
 
-    def start(self, state: SagaState, commands: Sequence[Command], *, template_name: str | None = None, template_version: int | None = None) -> None:
+    def start(
+        self,
+        state: SagaState,
+        commands: Sequence[Command],
+        *,
+        template_name: str | None = None,
+        template_version: int | None = None,
+        source: str = "template",
+        definition_snapshot: dict | None = None,
+        input_data: dict | None = None,
+    ) -> None:
         """Persist the output of start_saga(). Version 0 = 'must not exist yet'."""
         if (template_name is None) != (template_version is None):
             raise ValueError("template_name and template_version must both be given or both omitted")
+
+        kwargs: dict = {}
         if template_name is not None:
-            self._repo.save(state.saga_id, state, commands, expected_version=0, template_name=template_name, template_version=template_version)
+            kwargs["template_name"] = template_name
+            kwargs["template_version"] = template_version
+        if source != "template":
+            kwargs["source"] = source
+        if definition_snapshot is not None:
+            kwargs["definition_snapshot"] = definition_snapshot
+        if input_data is not None:
+            kwargs["input_data"] = input_data
+
+        if kwargs:
+            self._repo.save(state.saga_id, state, commands, expected_version=0, **kwargs)
         else:
             self._repo.save(state.saga_id, state, commands, expected_version=0)
 

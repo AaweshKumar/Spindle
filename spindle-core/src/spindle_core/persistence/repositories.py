@@ -110,12 +110,24 @@ class PgSagaRepository:
         *,
         template_name: str | None = None,
         template_version: int | None = None,
+        source: str = "template",
+        definition_snapshot: dict | None = None,
+        input_data: dict | None = None,
     ) -> None:
         """Atomically write state and commands; optionally store template metadata on insert."""
         if (template_name is None) != (template_version is None):
             raise ValueError("template_name and template_version must both be given or both omitted")
         if template_name is not None and expected_version != 0:
             raise ValueError("template metadata can only be set when creating a new saga (expected_version=0)")
+
+        if source not in ("template", "workflow"):
+            raise ValueError(f"invalid source: {source!r}")
+        if source == "workflow" and definition_snapshot is None:
+            raise ValueError("definition_snapshot is required when source='workflow'")
+        if source == "template" and definition_snapshot is not None:
+            raise ValueError("definition_snapshot cannot be set when source='template'")
+        if (source != "template" or definition_snapshot is not None or input_data is not None) and expected_version != 0:
+            raise ValueError("workflow metadata can only be set when creating a new saga (expected_version=0)")
 
         with self._session_factory() as session:
             try:
@@ -129,6 +141,9 @@ class PgSagaRepository:
                             status=new_state.status.value,
                             template_name=template_name,
                             template_version=template_version,
+                            source=source,
+                            definition_snapshot=definition_snapshot,
+                            input=input_data,
                         ))
                     else:
                         # update with OCC check; bump updated_at to track transitions

@@ -58,7 +58,7 @@ def test_migration_003_upgrade_downgrade_upgrade() -> None:
     cfg.set_main_option("script_location", "migrations")
     cfg.config_file_name = None
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_current_head() == "003"
+    assert "003" in [r.revision for r in script.walk_revisions()]
 
     try:
         # Upgrade to head (003)

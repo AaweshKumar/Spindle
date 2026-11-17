@@ -37,6 +37,9 @@ class SagaRepository(Protocol):
         *,
         template_name: str | None = None,
         template_version: int | None = None,
+        source: str = "template",
+        definition_snapshot: dict | None = None,
+        input_data: dict | None = None,
     ) -> None:
         """Atomically write the state AND queue the commands, or neither.
 

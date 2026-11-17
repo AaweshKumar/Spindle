@@ -4,6 +4,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -34,10 +35,43 @@ class SagaModel(Base):
     )
     template_name: Mapped[str | None] = mapped_column(String, nullable=True)
     template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source: Mapped[str] = mapped_column(
+        Text, nullable=False, default="template", server_default="template"
+    )
+    definition_snapshot: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    input: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
 
     __table_args__ = (
         Index("ix_sagas_created_at", "created_at", "saga_id"),
         Index("ix_sagas_status_created_at", "status", "created_at", "saga_id"),
+        CheckConstraint(
+            "source IN ('template', 'workflow')", name="ck_sagas_source_values"
+        ),
+        CheckConstraint(
+            "(source = 'workflow') = (definition_snapshot IS NOT NULL)",
+            name="ck_sagas_source_snapshot",
+        ),
+    )
+
+
+class StepResultModel(Base):
+    __tablename__ = "saga_step_results"
+
+    saga_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("sagas.saga_id", ondelete="CASCADE"), primary_key=True
+    )
+    step_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    response: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('execute', 'compensate')",
+            name="ck_saga_step_results_kind_values",
+        ),
     )
 
 

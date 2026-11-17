@@ -24,6 +24,7 @@ from spindle_core.config import Settings, get_settings
 from spindle_core.orchestrator.runner import Runner
 from spindle_core.persistence.repositories import PgSagaRepository
 from spindle_core.persistence.service_repository import ServiceRepository
+from spindle_core.persistence.step_result_repository import StepResultRepository
 from spindle_core.persistence.template_repository import TemplateRepository
 from spindle_core.streams.producer import RedisCommandBus
 from spindle_core.tapestry.loader import TapestryStore
@@ -134,4 +135,9 @@ def get_service_allowed_hosts(
 ) -> frozenset[str] | None:
     """Return parsed set of allowed hosts for service registration."""
     return parse_allowed_hosts(settings.SERVICE_ALLOWED_HOSTS)
+
+
+def get_step_result_repository(request: Request) -> StepResultRepository:
+    """Return a StepResultRepository bound to the app's session factory."""
+    return StepResultRepository(request.app.state.session_factory)
 

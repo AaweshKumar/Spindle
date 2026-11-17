@@ -185,6 +185,23 @@ Responses:
 - `200` Successful Response - [WorkflowResponse](#workflowresponse)
 - `422` Validation Error - [HTTPValidationError](#httpvalidationerror)
 
+## POST /workflows/{name}/runs
+
+Auth: bearer token required.
+
+Validate workflow run inputs and preconditions, returning 501 until execution is enabled.
+
+| parameter | in | required | type | notes |
+|---|---|---|---|---|
+| `name` | path | yes | string | maxLength: `64`; pattern: `"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"` |
+
+Request body (application/json): object
+
+Responses:
+
+- `501` Successful Response - any
+- `422` Validation Error - [HTTPValidationError](#httpvalidationerror)
+
 ## POST /validate/service
 
 Auth: bearer token required.
@@ -407,6 +424,19 @@ JSON body returned by POST /auth/token.  ``expires_in`` is seconds, matching RFC
 - Workflows are stored and validated but not yet executable.
 - Publishing with optional `base_version=N` enforces optimistic concurrency: returns 201 if created, 200 if identical content exists, 409 on version conflict. Definition text is never leaked in error messages.
 - `GET /workflows` lists the latest version of each workflow (unpaginated).
+
+### Authoring API: Workflow Runs (/workflows/{name}/runs)
+- `POST /workflows/{name}/runs`: validates workflow preconditions and input before execution. Workflows are stored and validated but not yet executable (returns 501).
+- Status codes:
+  - `401`: Missing or invalid bearer token.
+  - `404`: Unknown workflow name or version (`{"detail": "Workflow not found"}`).
+  - `409`: Workflow references a service that was unregistered since publication (`{"detail": "workflow references unregistered services", "services": [...]}`).
+  - `413`: Request body larger than 262144 bytes (`{"detail": "Request entity too large"}`).
+  - `422`: Validation error (missing required inputs, serialized input > 65536 bytes, nesting depth > 32, non-object input, extra body fields). Returned in standard 422 shape without echoing input values.
+  - `501`: Preconditions and inputs validated successfully; returns `{"detail": "workflow execution is not enabled yet"}`.
+- Input caps: serialized JSON input must not exceed 65536 bytes; maximum nesting depth is 32; must be a JSON object.
+- Input is write-only: input and definition snapshots are write-only. They are never returned by any GET endpoint, never logged, and never included in error messages.
+- `sagas.source` semantics: the `sagas` table includes a `source` column (`'template'` or `'workflow'`). For `'template'`, `template_name`/`template_version` refer to file templates and `definition_snapshot` is NULL. For `'workflow'`, `template_name`/`template_version` hold the workflow name and version, and `definition_snapshot` is non-NULL.
 
 ### Authoring API: Validation (/validate)
 - `POST /validate/service` and `POST /validate/workflow` perform dry-run validation with no side effects and no DB writes.
